@@ -32,7 +32,7 @@ std::string ipToString(const in_addr& addr)
     return buf;
 }
 
-[[maybe_unused]] std::string hex16(uint16_t v)
+std::string hex16(uint16_t v)
 {
     char buf[8];
     std::snprintf(buf, sizeof buf, "0x%04X", v);
@@ -151,6 +151,67 @@ struct RequestContext {
     std::optional<uint16_t> t2oPort; // from Sockaddr Info T->O item
 };
 
+// Network connection parameters of a Forward_Open (normal: 16 bit, large: 32 bit).
+struct NetParams {
+    enum Type { Null = 0, Multicast = 1, PointToPoint = 2 };
+    Type type = Null;
+    bool variable = false;
+    size_t size = 0;
+
+    static NetParams decode(uint32_t raw, bool large)
+    {
+        NetParams p;
+        if (large) {
+            p.type = Type((raw >> 29) & 3);
+            p.variable = (raw >> 25) & 1;
+            p.size = raw & 0xFFFF;
+        } else {
+            p.type = Type((raw >> 13) & 3);
+            p.variable = (raw >> 9) & 1;
+            p.size = raw & 0x1FF;
+        }
+        return p;
+    }
+};
+
+struct IoConnection {
+    enum class Kind { ExclusiveOwner, InputOnly, ListenOnly };
+    Kind kind = Kind::ExclusiveOwner;
+
+    // Connection triad
+    uint16_t serial = 0;
+    uint16_t originatorVendor = 0;
+    uint32_t originatorSerial = 0;
+
+    uint32_t o2tId = 0; // we consume packets carrying this ID
+    uint32_t t2oId = 0; // we produce packets carrying this ID
+    uint32_t t2oRpiUs = 0;
+    uint64_t timeoutUs = 0; // 0 = no consumption watchdog (O->T null)
+    bool o2tHasHeader = false;
+
+    in_addr originator{};
+    sockaddr_in t2oDest{};
+
+    Clock::time_point nextProduce;
+    Clock::time_point lastConsumed;
+    bool consumedAny = false;
+    uint32_t encapSeq = 0;
+    uint16_t cipSeq = 0;
+    uint16_t lastO2tSeq = 0;
+
+    const char* kindName() const
+    {
+        switch (kind) {
+        case Kind::ExclusiveOwner: return "exclusive-owner";
+        case Kind::InputOnly: return "input-only";
+        default: return "listen-only";
+        }
+    }
+};
+
+constexpr size_t kMaxIoConnections = 8;
+constexpr auto kInitialWatchdog = std::chrono::seconds(10);
+
 } // namespace
 
 struct Adapter::Impl {
@@ -190,8 +251,24 @@ struct Adapter::Impl {
     std::vector<uint8_t> handleConnectionManager(uint8_t service, ByteReader& body, RequestContext& ctx,
                                                  int depth);
     uint16_t identityStatus() const;
+    std::vector<uint8_t> forwardOpen(uint8_t service, ByteReader& r, const RequestContext& ctx);
+    std::vector<uint8_t> forwardClose(uint8_t service, ByteReader& r);
+
+    // ---- class-1 I/O ------------------------------------------------------
+
+    void handleIoPacket();
+    void produce(IoConnection& c, const std::vector<uint8_t>& image);
+    void serviceConnections(Clock::time_point now, Clock::time_point& nextEvent);
+    void closeConnection(size_t index, const char* reason);
+    void updateOwnerState();
 
     // ---- helpers ----------------------------------------------------------
+
+    std::vector<uint8_t> outputDataSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        return outputData;
+    }
 
     void log(const std::string& msg) const
     {
@@ -210,6 +287,7 @@ struct Adapter::Impl {
     socket_t udpIo = kInvalidSocket;
     in_addr bindIp{};
     std::vector<std::unique_ptr<TcpClient>> clients;
+    std::vector<IoConnection> connections; // network thread only
 
     std::mt19937 rng;
     uint32_t nextSession = 1;
@@ -285,6 +363,9 @@ void Adapter::Impl::stop()
     for (auto& c : clients)
         closeSocket(c->sock);
     clients.clear();
+    connections.clear();
+    ownerConnected = false;
+    plcRun = false;
     for (socket_t* s : {&tcpListen, &udpEncap, &udpIo}) {
         if (*s != kInvalidSocket) {
             closeSocket(*s);
@@ -300,7 +381,12 @@ void Adapter::Impl::run()
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 #endif
     while (running) {
-        auto timeout = std::chrono::microseconds(50000);
+        auto now = Clock::now();
+        auto nextEvent = now + std::chrono::milliseconds(50);
+        serviceConnections(now, nextEvent);
+        auto timeout = std::chrono::duration_cast<std::chrono::microseconds>(nextEvent - Clock::now());
+        if (timeout.count() < 0)
+            timeout = std::chrono::microseconds(0);
 
         fd_set readSet;
         FD_ZERO(&readSet);
@@ -344,6 +430,8 @@ void Adapter::Impl::run()
                     }
                 }
             }
+            if (FD_ISSET(udpIo, &readSet))
+                handleIoPacket();
             if (FD_ISSET(udpEncap, &readSet))
                 handleUdpEncap();
             for (size_t i = 0; i < clients.size();) {
@@ -712,11 +800,400 @@ std::vector<uint8_t> Adapter::Impl::handleAssembly(uint8_t service, const Parsed
     return cipReply(service, cip::kSuccess, w.data());
 }
 
-std::vector<uint8_t> Adapter::Impl::handleConnectionManager(uint8_t service, ByteReader& /*body*/,
-                                                            RequestContext& /*ctx*/, int /*depth*/)
+std::vector<uint8_t> Adapter::Impl::handleConnectionManager(uint8_t service, ByteReader& body,
+                                                            RequestContext& ctx, int depth)
 {
-    // Forward_Open / Forward_Close / Unconnected_Send: phase 2.
-    return cipReply(service, cip::kServiceNotSupported);
+    switch (service) {
+    case cip::kForwardOpen:
+    case cip::kLargeForwardOpen:
+        return forwardOpen(service, body, ctx);
+    case cip::kForwardClose:
+        return forwardClose(service, body);
+    case cip::kUnconnectedSend: {
+        // We are the end node: just execute the embedded request. Its reply
+        // is returned as-is (that is the Unconnected_Send success reply).
+        if (depth > 1)
+            return cipReply(service, cip::kPathSegmentError);
+        body.u8(); // priority / time tick
+        body.u8(); // timeout ticks
+        uint16_t size = body.u16();
+        const uint8_t* embedded = body.take(size);
+        return handleCip(embedded, size, ctx, depth + 1);
+    }
+    default:
+        return cipReply(service, cip::kServiceNotSupported);
+    }
+}
+
+std::vector<uint8_t> Adapter::Impl::forwardOpen(uint8_t service, ByteReader& r, const RequestContext& ctx)
+{
+    const bool large = service == cip::kLargeForwardOpen;
+    r.u8(); // priority / time tick
+    r.u8(); // timeout ticks
+    r.u32(); // O->T connection ID proposal (target chooses for point-to-point)
+    uint32_t t2oIdProposed = r.u32();
+    uint16_t serial = r.u16();
+    uint16_t origVendor = r.u16();
+    uint32_t origSerial = r.u32();
+    uint8_t timeoutMultiplier = r.u8();
+    r.skip(3);
+    uint32_t o2tRpi = r.u32();
+    NetParams o2t = NetParams::decode(large ? r.u32() : r.u16(), large);
+    uint32_t t2oRpi = r.u32();
+    NetParams t2o = NetParams::decode(large ? r.u32() : r.u16(), large);
+    uint8_t transport = r.u8();
+    size_t pathWords = r.u8();
+    const uint8_t* pathBytes = r.take(pathWords * 2);
+
+    auto fail = [&](uint16_t ext, const std::string& why) {
+        log("Forward_Open from " + ipToString(ctx.peer.sin_addr) + " rejected (" + hex16(ext) + "): " + why);
+        ByteWriter w;
+        w.u16(serial);
+        w.u16(origVendor);
+        w.u32(origSerial);
+        w.u8(0); // remaining path size
+        w.u8(0);
+        return cipReply(service, cip::kConnectionFailure, w.data(), {ext});
+    };
+
+    ParsedPath path;
+    if (!parsePath(pathBytes, pathWords * 2, path) || path.classId.value_or(0) != cip::kAssemblyClass)
+        return fail(cip::cm::kInvalidSegmentInPath, "connection path");
+
+    // Electronic key (0 fields = don't care).
+    if (path.hasKey) {
+        const auto& id = cfg.identity;
+        if ((path.keyVendor && path.keyVendor != id.vendorId) ||
+            (path.keyProductCode && path.keyProductCode != id.productCode))
+            return fail(cip::cm::kVendorOrProductMismatch, "electronic key vendor/product");
+        if (path.keyDeviceType && path.keyDeviceType != id.deviceType)
+            return fail(cip::cm::kDeviceTypeMismatch, "electronic key device type");
+        bool compatible = (path.keyMajor & 0x80) != 0;
+        uint8_t major = path.keyMajor & 0x7F;
+        if (major != 0) {
+            bool ok = major == id.revisionMajor &&
+                      (path.keyMinor == 0 ||
+                       (compatible ? path.keyMinor <= id.revisionMinor : path.keyMinor == id.revisionMinor));
+            if (!ok)
+                return fail(cip::cm::kRevisionMismatch, "electronic key revision");
+        }
+    }
+
+    if ((transport & 0x0F) != 1)
+        return fail(cip::cm::kTransportClassNotSupported, "only class 1 I/O is supported");
+
+    // Map instance ids -> config / O->T point / T->O point.
+    const auto& ids = path.instanceIds;
+    std::optional<uint16_t> o2tPoint, t2oPoint;
+    bool oneDirectionNull = o2t.type == NetParams::Null || t2o.type == NetParams::Null;
+    auto assignSingle = [&](uint16_t v) {
+        if (o2t.type == NetParams::Null)
+            t2oPoint = v;
+        else
+            o2tPoint = v;
+    };
+    if (ids.size() >= 3) {
+        o2tPoint = ids[1];
+        t2oPoint = ids[2];
+    } else if (ids.size() == 2) {
+        if (oneDirectionNull)
+            assignSingle(ids[1]); // ids[0] is the configuration instance
+        else {
+            o2tPoint = ids[0];
+            t2oPoint = ids[1];
+        }
+    } else if (ids.size() == 1 && oneDirectionNull) {
+        assignSingle(ids[0]);
+    } else {
+        return fail(cip::cm::kInvalidApplicationPath, "missing connection points");
+    }
+
+    IoConnection c;
+    if (t2oPoint != cfg.inputInstance)
+        return fail(cip::cm::kInvalidApplicationPath, "unknown T->O instance");
+    if (o2tPoint == cfg.outputInstance)
+        c.kind = IoConnection::Kind::ExclusiveOwner;
+    else if (o2tPoint == cfg.listenOnlyInstance)
+        c.kind = IoConnection::Kind::ListenOnly;
+    else if (o2tPoint == cfg.inputOnlyInstance || !o2tPoint)
+        c.kind = IoConnection::Kind::InputOnly;
+    else
+        return fail(cip::cm::kInvalidApplicationPath, "unknown O->T instance");
+
+    // Connection types: we produce unicast only, and consume unicast only.
+    if (t2o.type != NetParams::PointToPoint)
+        return fail(cip::cm::kInvalidT2OConnectionType, "T->O must be unicast (point-to-point)");
+    if (c.kind == IoConnection::Kind::ExclusiveOwner && o2t.type != NetParams::PointToPoint)
+        return fail(cip::cm::kInvalidO2TConnectionType, "O->T must be point-to-point");
+    if (o2t.type == NetParams::Multicast)
+        return fail(cip::cm::kInvalidO2TConnectionType, "O->T multicast not supported");
+
+    // Sizes include the 2-byte sequence count (+ 4-byte run/idle header on O->T).
+    if (t2o.size != cfg.inputSize + 2)
+        return fail(cip::cm::kInvalidT2OConnectionSize,
+                    "T->O size " + std::to_string(t2o.size) + ", expected " + std::to_string(cfg.inputSize + 2));
+    if (c.kind == IoConnection::Kind::ExclusiveOwner) {
+        if (o2t.size != cfg.outputSize + 6)
+            return fail(cip::cm::kInvalidO2TConnectionSize,
+                        "O->T size " + std::to_string(o2t.size) + ", expected " +
+                            std::to_string(cfg.outputSize + 6));
+        c.o2tHasHeader = true;
+    } else {
+        if (o2t.type != NetParams::Null && o2t.size > 6)
+            return fail(cip::cm::kInvalidO2TConnectionSize, "heartbeat O->T too large");
+        c.o2tHasHeader = o2t.size == 6;
+    }
+
+    if (t2oRpi < cfg.minRpiUs || (o2t.type != NetParams::Null && o2tRpi < cfg.minRpiUs))
+        return fail(cip::cm::kRpiNotSupported, "RPI below " + std::to_string(cfg.minRpiUs) + " us");
+
+    for (const auto& other : connections) {
+        bool sameTriad = other.serial == serial && other.originatorVendor == origVendor &&
+                         other.originatorSerial == origSerial;
+        if (sameTriad)
+            return fail(cip::cm::kDuplicateForwardOpen, "duplicate Forward_Open");
+        if (c.kind == IoConnection::Kind::ExclusiveOwner && other.kind == IoConnection::Kind::ExclusiveOwner)
+            return fail(cip::cm::kOwnershipConflict, "output already owned by " + ipToString(other.originator));
+    }
+    if (c.kind == IoConnection::Kind::ListenOnly &&
+        std::none_of(connections.begin(), connections.end(),
+                     [](const IoConnection& o) { return o.kind != IoConnection::Kind::ListenOnly; }))
+        return fail(cip::cm::kNonListenOnlyNotOpened, "listen-only needs an open owner/input-only connection");
+    if (connections.size() >= kMaxIoConnections)
+        return fail(cip::cm::kOutOfConnections, "too many connections");
+
+    c.serial = serial;
+    c.originatorVendor = origVendor;
+    c.originatorSerial = origSerial;
+    c.o2tId = nextConnectionId++;
+    c.t2oId = t2oIdProposed != 0 ? t2oIdProposed : nextConnectionId++;
+    c.t2oRpiUs = t2oRpi;
+    if (o2t.type != NetParams::Null)
+        c.timeoutUs = uint64_t(o2tRpi) * (4u << std::min<uint8_t>(timeoutMultiplier, 7));
+    c.originator = ctx.peer.sin_addr;
+    c.t2oDest.sin_family = AF_INET;
+    c.t2oDest.sin_addr = ctx.peer.sin_addr;
+    c.t2oDest.sin_port = htons(ctx.t2oPort.value_or(kIoPort));
+    auto now = Clock::now();
+    c.nextProduce = now;
+    c.lastConsumed = now;
+
+    log(std::string("Forward_Open OK: ") + c.kindName() + " from " + ipToString(c.originator) +
+        ", RPI O->T " + std::to_string(o2tRpi) + " us / T->O " + std::to_string(t2oRpi) +
+        " us, T->O to port " + std::to_string(ntohs(c.t2oDest.sin_port)));
+
+    ByteWriter w;
+    w.u32(c.o2tId);
+    w.u32(c.t2oId);
+    w.u16(serial);
+    w.u16(origVendor);
+    w.u32(origSerial);
+    w.u32(o2tRpi); // actual packet intervals = requested
+    w.u32(t2oRpi);
+    w.u8(0); // application reply size
+    w.u8(0);
+
+    connections.push_back(c);
+    updateOwnerState();
+    return cipReply(service, cip::kSuccess, w.data());
+}
+
+std::vector<uint8_t> Adapter::Impl::forwardClose(uint8_t service, ByteReader& r)
+{
+    r.u8();
+    r.u8();
+    uint16_t serial = r.u16();
+    uint16_t origVendor = r.u16();
+    uint32_t origSerial = r.u32();
+
+    ByteWriter w;
+    w.u16(serial);
+    w.u16(origVendor);
+    w.u32(origSerial);
+    w.u8(0); // application reply size / remaining path size
+    w.u8(0);
+
+    for (size_t i = 0; i < connections.size(); ++i) {
+        const auto& c = connections[i];
+        if (c.serial == serial && c.originatorVendor == origVendor && c.originatorSerial == origSerial) {
+            closeConnection(i, "Forward_Close");
+            return cipReply(service, cip::kSuccess, w.data());
+        }
+    }
+    return cipReply(service, cip::kConnectionFailure, w.data(), {cip::cm::kConnectionNotFound});
+}
+
+// ===========================================================================
+// Class-1 implicit I/O
+// ===========================================================================
+
+void Adapter::Impl::handleIoPacket()
+{
+    uint8_t buf[1500];
+    sockaddr_in from{};
+    int n = recvFrom(udpIo, buf, sizeof buf, from);
+    if (n <= 0)
+        return;
+
+    uint32_t connId = 0;
+    const uint8_t* payload = nullptr;
+    size_t payloadLen = 0;
+    bool haveAddress = false;
+    try {
+        ByteReader r(buf, size_t(n));
+        uint16_t count = r.u16();
+        for (uint16_t i = 0; i < count; ++i) {
+            uint16_t type = r.u16();
+            uint16_t len = r.u16();
+            const uint8_t* item = r.take(len);
+            if (type == cpf::kSequencedAddress && len == 8) {
+                ByteReader a(item, len);
+                connId = a.u32();
+                haveAddress = true;
+            } else if (type == cpf::kConnectedData) {
+                payload = item;
+                payloadLen = len;
+            }
+        }
+    } catch (const ParseError&) {
+        return;
+    }
+    if (!haveAddress || !payload || payloadLen < 2)
+        return;
+
+    auto it = std::find_if(connections.begin(), connections.end(), [&](const IoConnection& c) {
+        return c.o2tId == connId && c.originator.s_addr == from.sin_addr.s_addr;
+    });
+    if (it == connections.end())
+        return;
+    IoConnection& c = *it;
+
+    c.lastConsumed = Clock::now();
+    uint16_t seq = uint16_t(payload[0] | (payload[1] << 8));
+    if (c.consumedAny && int16_t(seq - c.lastO2tSeq) <= 0)
+        return; // duplicate / stale: watchdog refreshed, data ignored
+    c.consumedAny = true;
+    c.lastO2tSeq = seq;
+
+    if (c.kind != IoConnection::Kind::ExclusiveOwner)
+        return;
+
+    const uint8_t* data = payload + 2;
+    size_t dataLen = payloadLen - 2;
+    bool runBit = true;
+    if (c.o2tHasHeader) {
+        if (dataLen < 4)
+            return;
+        runBit = (data[0] & 0x01) != 0;
+        data += 4;
+        dataLen -= 4;
+    }
+    if (dataLen != cfg.outputSize)
+        return;
+
+    bool changed;
+    std::vector<uint8_t> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        changed = runBit != plcRun || std::memcmp(outputData.data(), data, dataLen) != 0;
+        if (changed) {
+            std::memcpy(outputData.data(), data, dataLen);
+            snapshot = outputData;
+        }
+    }
+    if (runBit != plcRun) {
+        plcRun = runBit;
+        log(std::string("PLC switched to ") + (runBit ? "RUN" : "IDLE"));
+    }
+    if (changed && cfg.onOutputs)
+        cfg.onOutputs(snapshot, runBit);
+}
+
+void Adapter::Impl::produce(IoConnection& c, const std::vector<uint8_t>& image)
+{
+    ByteWriter w;
+    w.u16(2);
+    w.u16(cpf::kSequencedAddress);
+    w.u16(8);
+    w.u32(c.t2oId);
+    w.u32(++c.encapSeq);
+    w.u16(cpf::kConnectedData);
+    w.u16(uint16_t(image.size() + 2));
+    w.u16(++c.cipSeq);
+    w.bytes(image);
+    sendTo(udpIo, w.data().data(), w.size(), c.t2oDest);
+}
+
+void Adapter::Impl::serviceConnections(Clock::time_point now, Clock::time_point& nextEvent)
+{
+    // Consumption watchdog
+    for (size_t i = 0; i < connections.size();) {
+        const auto& c = connections[i];
+        if (c.timeoutUs > 0) {
+            auto limit = std::chrono::microseconds(c.timeoutUs);
+            if (!c.consumedAny)
+                limit = std::max<std::chrono::microseconds>(limit, kInitialWatchdog);
+            if (now - c.lastConsumed > limit) {
+                closeConnection(i, "connection timed out");
+                continue;
+            }
+            nextEvent = std::min(nextEvent, c.lastConsumed + limit);
+        }
+        ++i;
+    }
+
+    // Production
+    std::vector<uint8_t> image;
+    for (auto& c : connections) {
+        if (now < c.nextProduce) {
+            nextEvent = std::min(nextEvent, c.nextProduce);
+            continue;
+        }
+        if (image.empty()) {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            image = inputData;
+        }
+        produce(c, image);
+        auto rpi = std::chrono::microseconds(c.t2oRpiUs);
+        c.nextProduce += rpi;
+        if (c.nextProduce <= now) // fell behind (e.g. OS hiccup): resync, don't burst
+            c.nextProduce = now + rpi;
+        nextEvent = std::min(nextEvent, c.nextProduce);
+    }
+}
+
+void Adapter::Impl::closeConnection(size_t index, const char* reason)
+{
+    const IoConnection& c = connections[index];
+    log(std::string(c.kindName()) + " connection from " + ipToString(c.originator) + " closed: " + reason);
+    connections.erase(connections.begin() + static_cast<std::ptrdiff_t>(index));
+
+    // Listen-only connections cannot outlive the last non-listen-only one.
+    bool anyNonListen = std::any_of(connections.begin(), connections.end(), [](const IoConnection& o) {
+        return o.kind != IoConnection::Kind::ListenOnly;
+    });
+    if (!anyNonListen && !connections.empty()) {
+        log("closing listen-only connections (no owner left)");
+        connections.clear();
+    }
+    updateOwnerState();
+}
+
+void Adapter::Impl::updateOwnerState()
+{
+    bool owner = std::any_of(connections.begin(), connections.end(), [](const IoConnection& c) {
+        return c.kind == IoConnection::Kind::ExclusiveOwner;
+    });
+    if (owner == ownerConnected)
+        return;
+    ownerConnected = owner;
+    if (!owner && plcRun) {
+        plcRun = false;
+        if (cfg.onOutputs)
+            cfg.onOutputs(outputDataSnapshot(), false);
+    }
+    if (cfg.onConnectionChanged)
+        cfg.onConnectionChanged(owner);
 }
 
 // ===========================================================================
