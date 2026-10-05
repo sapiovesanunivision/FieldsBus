@@ -13,6 +13,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <mstcpip.h>
+#include <mswsock.h>   // SIO_UDP_CONNRESET (Windows SDK 10.0.26100 defines it here, not in mstcpip.h)
 #else
 #include <arpa/inet.h>
 #include <cerrno>
@@ -41,6 +42,35 @@ inline int closeSocket(socket_t s) { return ::close(s); }
 
 // Initializes Winsock and requests 1 ms timer resolution (default is 15.6 ms,
 // which would make every RPI below ~16 ms jittery). No-op on POSIX.
+//
+// Windows 11 ignores timeBeginPeriod() for processes whose windows are minimized,
+// occluded or absent (console apps started hidden, services, a minimized HMI) and
+// falls back to the 15.6 ms tick: measured as ~65 instead of 100 packets/s at
+// RPI 10 ms. Opting out of timer-resolution power throttling keeps the 1 ms
+// request honoured regardless of window state.
+#ifdef _WIN32
+inline void honourTimerResolutionRequests()
+{
+    // SetProcessInformation(ProcessPowerThrottling, ...) is declared only for
+    // _WIN32_WINNT >= 0x0602 and the library targets 0x0601, so resolve it at run
+    // time (absent on Windows 7: then there is no throttling to opt out of).
+    // Values from processthreadsapi.h (SDK 10.0.26100).
+    struct PowerThrottlingState { ULONG version, controlMask, stateMask; };
+    using SetProcessInformationFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+    constexpr int kProcessPowerThrottling = 4;           // PROCESS_INFORMATION_CLASS::ProcessPowerThrottling
+    constexpr ULONG kIgnoreTimerResolution = 0x4;        // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (!kernel32)
+        return;
+    auto fn = reinterpret_cast<SetProcessInformationFn>(
+        reinterpret_cast<void*>(GetProcAddress(kernel32, "SetProcessInformation")));
+    if (!fn)
+        return;
+    PowerThrottlingState state{1, kIgnoreTimerResolution, 0}; // stateMask 0 = always honour requests
+    fn(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof state);
+}
+#endif
+
 class SocketLibrary {
 public:
     SocketLibrary()
@@ -48,6 +78,7 @@ public:
 #ifdef _WIN32
         WSADATA wsa;
         ok_ = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        honourTimerResolutionRequests();
         timeBeginPeriod(1);
 #endif
     }

@@ -5,7 +5,7 @@
     {
       "name": "vs2026",
       "displayName": "Visual Studio 2026 (x64)",
-      "description": "Generates build/vs2026/SoftFieldbus.sln + .vcxproj files. Needs CMake 4.2+ (bundled with VS 2026).",
+      "description": "Generates build/vs2026/SoftFieldbus.slnx + .vcxproj files. Needs CMake 4.2+ (bundled with VS 2026).",
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/vs2026",

@@ -22,7 +22,11 @@
     <!-- C++/CLI wrapper built by the SoftEip.Net project of the same solution -->
     <Reference Include="SoftEip.Net">
       <HintPath>@SOFTEIP_BIN_DIR@/$(Configuration)/SoftEip.Net.dll</HintPath>
-      <Private>false</Private> <!-- already in the same output folder -->
+      <!-- Must stay true: on .NET 5+ a Private=false reference is left out of
+           SoftEipSample.deps.json and the host then refuses to load the app-local
+           SoftEip.Net.dll (FileNotFoundException), even though it sits next to the exe.
+           Both projects share the output folder, so the copy itself is a no-op. -->
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
 

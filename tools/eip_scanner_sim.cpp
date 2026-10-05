@@ -418,7 +418,9 @@ int main(int argc, char** argv)
     closeSocket(udp);
 
     uint32_t expected = uint32_t(o.seconds * 1000 / o.rpiMs);
-    bool pass = closeOk && received > expected / 2 && echoMatches > 0;
+    // Echo is only checkable when the adapter can echo our outputs (not for input-only / listen-only).
+    const bool echoExpected = o.inSize > 4 && o.outSize >= o.inSize;
+    bool pass = closeOk && received > expected / 2 && (!echoExpected || echoMatches > 0);
     std::printf("RESULT: %s (T->O %u of ~%u expected, echo matches %u)\n", pass ? "PASS" : "FAIL", received, expected,
                 echoMatches);
     return pass ? 0 : 1;

@@ -64,13 +64,13 @@ All of these are set in `softeip::AdapterConfig`.
 
 Requires CMake 3.16 or later and a C++17 compiler.
 
-**Windows: generate a Visual Studio 2026 solution (.sln + .vcxproj):**
+**Windows: generate a Visual Studio 2026 solution (.slnx + .vcxproj):**
 ```bat
 generate_vs2026.bat open
 ```
 or, equivalently:
 ```bat
-cmake --preset vs2026                         :: -> build\vs2026\SoftFieldbus.sln
+cmake --preset vs2026                         :: -> build\vs2026\SoftFieldbus.slnx
 cmake --build --preset vs2026-release         :: optional command-line build
 ```
 - The `Visual Studio 18 2026` generator needs **CMake 4.2 or newer**. The CMake bundled with VS 2026 is new enough;

@@ -27,10 +27,15 @@ Windows-specific parts have **never been compiled**.
 |---|---|
 | Native lib `softeip` (static, or shared with `-DSOFTEIP_SHARED=ON`) | ✅ builds clean with g++ on Linux. End-to-end and negative tests pass (`docs/phases/phase-3-demo-and-sim.md`) |
 | `eip_adapter_demo`, `eip_scanner_sim` | ✅ Linux |
-| Windows code paths in `include/softeip/socket_compat.hpp` (Winsock, `timeBeginPeriod`, `SIO_UDP_CONNRESET`, thread priority) | ⚠️ written, never compiled |
-| `CMakePresets.json` / `generate_vs2026.bat` (generator `Visual Studio 18 2026`) | ⚠️ never run |
-| `dotnet/` C++/CLI wrapper `SoftEip.Net.dll` + C# sample `SoftEipSample` | ⚠️ never compiled |
+| Windows code paths in `include/softeip/socket_compat.hpp` (Winsock, `timeBeginPeriod`, `SIO_UDP_CONNRESET`, thread priority) | ✅ VS 2026, 0 warnings; loopback end-to-end + negative tests pass (2026-10-05) |
+| `CMakePresets.json` / `generate_vs2026.bat` (generator `Visual Studio 18 2026`) | ✅ works; VS 2026 writes **`SoftFieldbus.slnx`** |
+| `dotnet/` C++/CLI wrapper `SoftEip.Net.dll` + C# sample `SoftEipSample` | ✅ builds (Release + Debug, 0 warnings); C# sample PASS 500/500 |
 | Real PLC test | ❌ not done |
+
+> **Update (2026-10-05, Windows session):** steps 1–6 below are done. The results and the six fixes are in
+> `docs/phases/phase-5-dotnet-wrapper.md` → "Windows results". The most important finding is that Windows 11
+> **ignores `timeBeginPeriod` for processes without a visible window**. `SocketLibrary` now opts out of that
+> throttling; without it, RPI 10 ms delivered only ~85 % of the packets. The next task is §5.1, the real PLC test.
 
 ## 3. Steps
 
@@ -50,7 +55,7 @@ dotnet --list-sdks
 ```bat
 generate_vs2026.bat
 ```
-This should produce `build\vs2026\SoftFieldbus.sln` with the projects `softeip`, `eip_adapter_demo`,
+This should produce `build\vs2026\SoftFieldbus.slnx` with the projects `softeip`, `eip_adapter_demo`,
 `eip_scanner_sim`, `SoftEip.Net` and `SoftEipSample`.
 
 ### Step 3: build the native targets first
@@ -75,7 +80,7 @@ build\vs2026\bin\Release\eip_scanner_sim.exe --target 127.0.0.1 --rpi-ms 10 --se
 cmake --build --preset vs2026-release --target SoftEip.Net
 :: the C# project needs a NuGet restore; easiest is to build the whole solution in the VS IDE,
 :: or from the command line:
-msbuild build\vs2026\SoftFieldbus.sln /restore /p:Configuration=Release /p:Platform=x64
+msbuild build\vs2026\SoftFieldbus.slnx /restore /p:Configuration=Release /p:Platform=x64
 ```
 Then run `build\vs2026\bin\Release\SoftEipSample.exe` together with the simulator from step 4. Expect `RESULT: PASS`.
 
