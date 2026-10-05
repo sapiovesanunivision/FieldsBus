@@ -170,7 +170,7 @@ std::vector<uint8_t> readRequest(uint8_t fc, size_t start, size_t qty)
 std::optional<std::vector<uint8_t>> readData(Master& m, uint8_t fc, size_t start, size_t qty)
 {
     auto r = m.request(readRequest(fc, start, qty));
-    if (!r || r->size() < 2 || (*r)[0] != fc || (*r)[1] != r->size() - 2)
+    if (!r || r->size() < 2 || (*r)[0] != fc || size_t((*r)[1]) != r->size() - 2)
         return std::nullopt;
     return std::vector<uint8_t>(r->begin() + 2, r->end());
 }
