@@ -200,5 +200,5 @@ src/               adapter implementation
 dotnet/            C++/CLI wrapper (SoftEip.Net.dll) + C# sample
 examples/          demo device
 tools/             PLC/scanner simulator
-docs/              plan and phase documents
+docs/              plan, phase documents, HANDOFF.md (Windows build/verify steps)
 ```
