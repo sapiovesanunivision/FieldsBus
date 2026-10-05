@@ -263,7 +263,9 @@ also checked; results are in `docs/phases/phase-6-modbus.md`.
 
 ## Connecting a real PLC
 
-### Rockwell Studio 5000 (Generic Ethernet Module, no EDS needed)
+### Rockwell Studio 5000: EtherNet/IP
+
+#### Generic Ethernet Module (no EDS needed)
 1. I/O Configuration → Ethernet → New Module → **ETHERNET-MODULE** (Generic Ethernet Module).
 2. Comm Format: **Data - SINT**. IP address: the PC's IP.
 3. Assembly instances and sizes:
@@ -275,19 +277,32 @@ also checked; results are in `docs/phases/phase-6-modbus.md`.
    - Tick **Use Unicast Connection over EtherNet/IP**
 5. Download, then switch the PLC to RUN. The demo prints the outputs, and the PLC reads them back with bytes 0‑3 used as a heartbeat counter.
 
-### Other scanners (Omron, Keyence, CODESYS, Beckhoff, ...)
+### Other EtherNet/IP scanners (Omron, Keyence, CODESYS, Beckhoff, ...)
 Most of these need an **EDS file** to import the device. That is the next roadmap item. Until then, use a "generic
 EtherNet/IP device" entry if the tool has one, with the same instances, sizes and a unicast connection.
 
+### Modbus master (any PLC, SCADA or HMI)
+1. Add a Modbus TCP (or Modbus UDP) server/slave device: the PC's IP, port **502**, unit id as configured
+   (`mb_slave_demo` uses **1**; `unitId = 0` answers any id).
+2. **Write the PC's inputs** (PLC → PC) with FC16 (Write Multiple Registers) to holding registers from **0**. Coils FC05/FC15 address the same bytes as bits.
+3. **Read the PC's outputs** (PC → PLC) with FC04 (Read Input Registers) from **0**, or with FC02 as bits.
+   If the master can only read holding registers, set `outputsInHoldingAt` (for example 1000) and read with FC03 from there.
+4. Many tools number registers from 1: holding register 0 is "40001", input register 0 is "30001".
+5. With the demo running, the master reads back what it wrote (from byte 4 on), and input registers 0..1 count up as a heartbeat.
+
 ### Windows checklist
-- Firewall: allow inbound **TCP 44818, UDP 44818 and UDP 2222** for the executable.
+- Firewall: allow inbound traffic for the executable:
+  - EtherNet/IP: **TCP 44818, UDP 44818 and UDP 2222**
+  - Modbus: **TCP 502 and UDP 502**
 - Timer resolution: Windows 11 ignores `timeBeginPeriod(1)` for processes without a visible window (a minimized HMI,
   a service). The library opts out of that power throttling itself, so the 1 ms resolution holds; without the
   opt-out, RPI 10 ms delivered only ~85 % of the packets. Apps that create their own timing loops should use a
   high-resolution waitable timer, as `eip_adapter_demo` does.
 - Use a dedicated NIC for the machine network. Disable its power saving and interrupt moderation.
 - Keep the PC's IP static.
-- The vendor ID default is `0xFFFF` (a placeholder). Use your company's ODVA vendor ID for any product.
+- The EtherNet/IP vendor ID default is `0xFFFF` (a placeholder). Use your company's ODVA vendor ID for any product.
+- Only one program can own a port: stop RSLinx / Hilscher drivers (44818) or other Modbus servers (502) on the same NIC,
+  or bind to a specific IP with `bindAddress`.
 
 ## Roadmap
 
