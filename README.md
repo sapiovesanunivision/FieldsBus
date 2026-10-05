@@ -111,6 +111,37 @@ bool plcRunning = adapter.plcInRun();
 the usual `windows.h` / `winsock.h` ordering problems. For a C# (WPF/WinUI/MAUI) front end, wrap it in a small C API
 DLL or a C++/CLI shim.
 
+## Using it from C# (WPF / WinUI / MAUI-Windows)
+
+`SoftEip.Net.dll` is a C++/CLI mixed-mode assembly. From C# it is a normal .NET class, and the native
+adapter is linked inside it. Visual Studio builds it as part of the generated solution, together with a C# sample
+(`SoftEipSample`, which works like `eip_adapter_demo`).
+
+```csharp
+using SoftFieldbus;
+
+var cfg = new EipAdapterConfig { InputSize = 32, OutputSize = 32, BindAddress = "192.168.1.50" };
+using var eip = new EipAdapter(cfg);
+eip.OutputsChanged += (s, e) =>            // raised on the network thread
+    Dispatcher.BeginInvoke(() => Show(e.Data, e.PlcRun));
+eip.ConnectionChanged += (s, e) => { /* e.Connected */ };
+eip.Start();
+
+eip.SetInputs(myInputs);                    // byte[], thread safe
+byte[] outputs = eip.GetOutputs();
+```
+
+- **Target framework:** pick it with `-DSOFTEIP_DOTNET_FRAMEWORK=`. The default is `net8.0`. You can use
+  `net10.0`, or `v4.8` for .NET Framework WPF/MFC hosts.
+- **Deploy** `SoftEip.Net.dll`. For .NET 5+, also deploy `Ijwhost.dll`. Both are in `build/vs2026/bin/<Config>/`.
+  The app must be **x64**.
+- **Event handlers:** they run on the adapter thread. Keep them short, marshal to the UI thread, and never call
+  `Stop()` or `Dispose()` from inside one.
+- **MAUI:** this only works for the Windows target, because C++/CLI is Windows-only.
+
+**Native C++ DLL instead of a static lib:** configure with `-DSOFTEIP_SHARED=ON` to get `softeip.dll`, which exports
+`softeip::Adapter`. The consuming app must use the same compiler and runtime (/MD).
+
 ## Testing without a PLC
 
 `eip_scanner_sim` acts as a PLC. It runs ListIdentity, a session, Forward_Open, cyclic I/O with an echo check, and Forward_Close:
@@ -154,8 +185,7 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
 2. **Multicast T→O.** Some PLCs default to it, and listen-only connections only really work with it.
 3. **TCP/IP (0xF5) and Ethernet Link (0xF6) objects.** The conformance test requires them, and some scanners read them.
 4. **Class-3 explicit messaging** (MSG instructions to read/write assemblies or parameters).
-5. **A C API / C# wrapper** for WPF/WinUI/MAUI HMIs.
-6. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
+5. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
    This is a large effort, about 5–10× the work of EtherNet/IP. An alternative is porting p-net (GPL or commercial license) to Npcap.
 
 **Build vs. reuse:** [OpENer](https://github.com/EIPStackGroup/OpENer) is a mature open-source EtherNet/IP adapter in C
@@ -167,6 +197,7 @@ If you plan formal ODVA conformance, compare effort against OpENer or a commerci
 ```
 include/softeip/   public API (eip_adapter.hpp) + protocol helpers
 src/               adapter implementation
+dotnet/            C++/CLI wrapper (SoftEip.Net.dll) + C# sample
 examples/          demo device
 tools/             PLC/scanner simulator
 docs/              plan and phase documents

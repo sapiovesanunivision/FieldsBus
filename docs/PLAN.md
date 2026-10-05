@@ -75,3 +75,8 @@ Outcome of this step: a working EtherNet/IP adapter library plus a demo, and a s
 2. Run `./build/eip_adapter_demo &` and then `./build/eip_scanner_sim --target 127.0.0.1 --rpi 10 --seconds 5 --local-port 2223`. Expect the identity name to be printed, Forward_Open OK, about 500 T→O packets, the echo check passing, Forward_Close OK, and exit code 0.
 3. Negative tests: a wrong size gives 0x0127/0x0128, an RPI that is too fast gives 0x0111, and a second owner gives 0x0106. Running the simulator with `--skip-close` shows the adapter log "connection timed out" after the watchdog expires.
 4. Commit and push to `claude/software-fieldbus-solution-yp9gxc` (`git push -u origin ...`). No PR.
+
+## Follow-ups (after the initial 4 phases)
+- **VS 2026 solution generation:** `CMakePresets.json` + `generate_vs2026.bat`
+- **Phase 5, .NET wrapper:** C++/CLI `SoftEip.Net.dll` + C# sample + optional native DLL.
+  See `docs/phases/phase-5-dotnet-wrapper.md`.

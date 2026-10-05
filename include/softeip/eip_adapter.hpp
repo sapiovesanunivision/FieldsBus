@@ -15,6 +15,19 @@
 #include <string>
 #include <vector>
 
+// SOFTEIP_SHARED is defined (by CMake) when softeip is built/used as a DLL.
+#if defined(_WIN32) && defined(SOFTEIP_SHARED)
+#ifdef SOFTEIP_BUILDING_DLL
+#define SOFTEIP_API __declspec(dllexport)
+#else
+#define SOFTEIP_API __declspec(dllimport)
+#endif
+#elif defined(SOFTEIP_SHARED)
+#define SOFTEIP_API __attribute__((visibility("default")))
+#else
+#define SOFTEIP_API
+#endif
+
 namespace softeip {
 
 struct IdentityInfo {
@@ -51,7 +64,12 @@ struct AdapterConfig {
     std::function<void(bool ownerConnected)> onConnectionChanged;
 };
 
-class Adapter {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
+#endif
+
+class SOFTEIP_API Adapter {
 public:
     explicit Adapter(AdapterConfig config);
     ~Adapter();
@@ -72,5 +90,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 } // namespace softeip
