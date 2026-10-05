@@ -64,17 +64,26 @@ All of these are set in `softeip::AdapterConfig`.
 
 Requires CMake 3.16 or later and a C++17 compiler.
 
-**Windows (Visual Studio 2022):**
+**Windows: generate a Visual Studio 2026 solution (.sln + .vcxproj):**
 ```bat
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-build\Release\eip_adapter_demo.exe
+generate_vs2026.bat open
 ```
-You can also open the folder in Visual Studio (File → Open → Folder), which uses the CMake support directly.
+or, equivalently:
+```bat
+cmake --preset vs2026                         :: -> build\vs2026\SoftFieldbus.sln
+cmake --build --preset vs2026-release         :: optional command-line build
+```
+- The `Visual Studio 18 2026` generator needs **CMake 4.2 or newer**. The CMake bundled with VS 2026 is new enough;
+  check with `cmake --version` in a Developer Command Prompt.
+- For VS 2022, use `cmake --preset vs2022` instead.
+- The solution shows the headers under *Header Files* and groups the projects into folders.
+  `eip_adapter_demo` is the startup project, and `eip_scanner_sim` comes with debugger arguments for a local test.
+- The `.vcxproj` files are generated, so don't edit or commit them. Change `CMakeLists.txt` and regenerate.
+  Opening the folder directly in VS (File → Open → Folder) also works, with no solution needed.
 
 **Linux (for development and CI):**
 ```sh
-cmake -S . -B build && cmake --build build -j
+cmake --preset linux && cmake --build --preset linux -j
 ```
 
 ## Using the library
