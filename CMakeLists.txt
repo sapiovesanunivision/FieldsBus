@@ -64,8 +64,9 @@ softeip_warnings(eip_scanner_sim)
 
 # ---- Modbus (softmb): SERVER (PC holds the registers) + CLIENT (PC polls a PLC) ----
 add_library(softmb STATIC
-    src/modbus_server.cpp
-    include/softmb/modbus_server.hpp include/softmb/modbus_slave.hpp include/softmb/modbus_defs.hpp)
+    src/modbus_server.cpp src/modbus_client.cpp
+    include/softmb/modbus_server.hpp include/softmb/modbus_slave.hpp include/softmb/modbus_defs.hpp
+    include/softmb/modbus_client.hpp)
 target_include_directories(softmb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(softmb PUBLIC Threads::Threads)
 softeip_warnings(softmb)

@@ -1,23 +1,27 @@
-// Minimal Modbus master used to test mb_server_demo without a PLC.
-// Exercises every supported function code, the exception paths, the unit-id
-// filter and TCP pipelining, then measures the request rate.
+// mb_client_test: automated test of the Modbus CLIENT (softmb::ModbusClient) against the Modbus
+// SERVER demo (mb_server_demo). It exercises every supported function code through the client API,
+// the server's exception paths (raw requests the client would refuse), the unit-id filter, TCP
+// pipelining, client-side validation / timeouts / reconnect, and measures the request rate.
 //
 // Usage: mb_client_test [--target IP] [--port N] [--transport tcp|udp] [--unit N]
-//                      [--in-size N] [--out-size N] [--seconds N]
-// Sizes must match the slave (defaults match mb_server_demo: 64 / 64, unit 1).
+//                       [--in-size N] [--out-size N] [--seconds N]
+// Sizes must match the server (defaults match mb_server_demo: 64 / 64, unit 1).
+#include "softmb/modbus_client.hpp"
+#include "softmb/modbus_defs.hpp"
+
 #include "softeip/bytes.hpp"
 #include "softeip/socket_compat.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
-using namespace softeip;
+using namespace softmb;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -27,112 +31,9 @@ struct Options {
     uint16_t port = 502;
     bool udp = false;
     uint8_t unit = 1;
-    size_t inSize = 64;  // slave input area  = holding registers
-    size_t outSize = 64; // slave output area = input registers
+    size_t inSize = 64;  // server input area  = holding registers / coils
+    size_t outSize = 64; // server output area = input registers / discrete inputs
     int seconds = 2;
-};
-
-class Master {
-public:
-    explicit Master(const Options& o) : o_(o)
-    {
-        addr_.sin_family = AF_INET;
-        addr_.sin_port = htons(o.port);
-        inet_pton(AF_INET, o.target.c_str(), &addr_.sin_addr);
-    }
-    ~Master()
-    {
-        if (sock_ != kInvalidSocket)
-            closeSocket(sock_);
-    }
-
-    bool open()
-    {
-        sock_ = ::socket(AF_INET, o_.udp ? SOCK_DGRAM : SOCK_STREAM, o_.udp ? IPPROTO_UDP : IPPROTO_TCP);
-        if (sock_ == kInvalidSocket)
-            return false;
-        setRecvTimeoutMs(sock_, 500);
-        if (o_.udp) {
-            disableUdpConnReset(sock_);
-            return true;
-        }
-        setNoDelay(sock_);
-        return ::connect(sock_, reinterpret_cast<sockaddr*>(&addr_), sizeof addr_) == 0;
-    }
-
-    std::vector<uint8_t> frame(const std::vector<uint8_t>& pdu, uint8_t unit, uint16_t tid) const
-    {
-        ByteWriter w;
-        w.u16be(tid);
-        w.u16be(0);
-        w.u16be(uint16_t(pdu.size() + 1));
-        w.u8(unit);
-        w.bytes(pdu);
-        return std::move(w.data());
-    }
-
-    bool sendRaw(const std::vector<uint8_t>& adu)
-    {
-        if (o_.udp)
-            return sendTo(sock_, adu.data(), adu.size(), addr_) == int(adu.size());
-        return sendAll(sock_, adu.data(), adu.size());
-    }
-
-    // Receives one ADU; returns its PDU, checks transaction id.
-    std::optional<std::vector<uint8_t>> receive(uint16_t tid)
-    {
-        uint8_t buf[300];
-        size_t n = 0;
-        if (o_.udp) {
-            sockaddr_in from{};
-            int r = recvFrom(sock_, buf, sizeof buf, from);
-            if (r < 8)
-                return std::nullopt;
-            n = size_t(r);
-        } else {
-            if (!recvExact(buf, 7))
-                return std::nullopt;
-            size_t len = (size_t(buf[4]) << 8) | buf[5];
-            if (len < 2 || len > 254 || !recvExact(buf + 7, len - 1))
-                return std::nullopt;
-            n = 6 + len;
-        }
-        uint16_t gotTid = uint16_t((buf[0] << 8) | buf[1]);
-        if (gotTid != tid) {
-            std::printf("  transaction id mismatch: sent %u got %u\n", tid, gotTid);
-            return std::nullopt;
-        }
-        return std::vector<uint8_t>(buf + 7, buf + n);
-    }
-
-    std::optional<std::vector<uint8_t>> request(const std::vector<uint8_t>& pdu, uint8_t unit)
-    {
-        uint16_t tid = ++tid_;
-        if (!sendRaw(frame(pdu, unit, tid)))
-            return std::nullopt;
-        return receive(tid);
-    }
-    std::optional<std::vector<uint8_t>> request(const std::vector<uint8_t>& pdu) { return request(pdu, o_.unit); }
-
-    uint16_t nextTid() { return ++tid_; }
-
-private:
-    bool recvExact(uint8_t* p, size_t n)
-    {
-        while (n > 0) {
-            int r = recvBytes(sock_, p, n);
-            if (r <= 0)
-                return false;
-            p += r;
-            n -= size_t(r);
-        }
-        return true;
-    }
-
-    Options o_;
-    sockaddr_in addr_{};
-    socket_t sock_ = kInvalidSocket;
-    uint16_t tid_ = 0;
 };
 
 int g_failures = 0;
@@ -158,31 +59,76 @@ void be16(std::vector<uint8_t>& v, size_t x)
     v.push_back(uint8_t(x));
 }
 
-std::vector<uint8_t> readRequest(uint8_t fc, size_t start, size_t qty)
+std::vector<uint8_t> readRequest(uint8_t function, size_t start, size_t qty)
 {
-    std::vector<uint8_t> v{fc};
+    std::vector<uint8_t> v{function};
     be16(v, start);
     be16(v, qty);
     return v;
 }
 
-// Returns the data bytes of a read response, or nullopt on exception/error.
-std::optional<std::vector<uint8_t>> readData(Master& m, uint8_t fc, size_t start, size_t qty)
+// Raw request the client API would refuse locally: the server must answer with `code`.
+void expectRawException(ModbusClient& c, const std::vector<uint8_t>& req, uint8_t code, const std::string& what)
 {
-    auto r = m.request(readRequest(fc, start, qty));
-    if (!r || r->size() < 2 || (*r)[0] != fc || size_t((*r)[1]) != r->size() - 2)
-        return std::nullopt;
-    return std::vector<uint8_t>(r->begin() + 2, r->end());
-}
-
-// Expects an exception response with the given code.
-void expectException(Master& m, const std::vector<uint8_t>& req, uint8_t code, const std::string& what)
-{
-    auto r = m.request(req);
-    bool ok = r && r->size() == 2 && (*r)[0] == uint8_t(req[0] | 0x80) && (*r)[1] == code;
+    std::vector<uint8_t> resp;
+    Result r = c.transact(req, resp);
     char buf[160];
     std::snprintf(buf, sizeof buf, "%s -> exception %02X", what.c_str(), code);
-    check(ok, buf);
+    check(r.code == ResultCode::Exception && r.exception == code, std::string(buf) + " [" + r.text() + "]");
+}
+
+void expectException(const Result& r, uint8_t code, const std::string& what)
+{
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%s -> exception %02X", what.c_str(), code);
+    check(r.code == ResultCode::Exception && r.exception == code, std::string(buf) + " [" + r.text() + "]");
+}
+
+std::vector<uint16_t> toRegs(const std::vector<uint8_t>& bytes)
+{
+    std::vector<uint16_t> regs(bytes.size() / 2);
+    for (size_t i = 0; i < regs.size(); ++i)
+        regs[i] = uint16_t((bytes[i * 2] << 8) | bytes[i * 2 + 1]);
+    return regs;
+}
+
+// Three requests in ONE TCP segment (raw socket: the client API is one-request-at-a-time).
+bool pipelineTest(const Options& o, const std::vector<uint16_t>& expect)
+{
+    using namespace softeip;
+    socket_t s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(o.port);
+    inet_pton(AF_INET, o.target.c_str(), &a.sin_addr);
+    bool ok = s != kInvalidSocket && connectWithTimeout(s, a, 1000);
+    std::vector<uint8_t> burst;
+    for (int i = 0; ok && i < 3; ++i) {
+        ByteWriter w;
+        w.u16be(uint16_t(100 + i));
+        w.u16be(0);
+        w.u16be(6);
+        w.u8(o.unit);
+        w.bytes(readRequest(fc::kReadHoldingRegisters, size_t(i), 1));
+        burst.insert(burst.end(), w.data().begin(), w.data().end());
+    }
+    ok = ok && sendAll(s, burst.data(), burst.size());
+    setRecvTimeoutMs(s, 1000);
+    for (int i = 0; ok && i < 3; ++i) {
+        uint8_t buf[11];
+        size_t got = 0;
+        while (ok && got < sizeof buf) {
+            int r = recvBytes(s, buf + got, sizeof buf - got);
+            ok = r > 0;
+            if (ok)
+                got += size_t(r);
+        }
+        ok = ok && ((buf[0] << 8) | buf[1]) == 100 + i && buf[7] == 0x03 &&
+             uint16_t((buf[9] << 8) | buf[10]) == expect[size_t(i)];
+    }
+    if (s != kInvalidSocket)
+        closeSocket(s);
+    return ok;
 }
 
 } // namespace
@@ -207,26 +153,33 @@ int main(int argc, char** argv)
         }
     }
 
-    SocketLibrary lib;
-    Master m(o);
-    if (!m.open()) {
-        std::printf("cannot open %s connection to %s:%u\n", o.udp ? "UDP" : "TCP", o.target.c_str(), o.port);
+    ModbusClientConfig cfg;
+    cfg.host = o.target;
+    cfg.port = o.port;
+    cfg.transport = o.udp ? ClientTransport::Udp : ClientTransport::Tcp;
+    cfg.unitId = o.unit;
+    cfg.onLog = [](const std::string& m) { std::printf("  (client) %s\n", m.c_str()); };
+    ModbusClient c(cfg);
+    std::string error;
+    if (!c.connect(&error)) {
+        std::printf("cannot open %s connection to %s:%u (%s)\n", o.udp ? "UDP" : "TCP", o.target.c_str(), o.port,
+                    error.c_str());
         return 1;
     }
-    std::printf("Modbus %s master -> %s:%u unit %u\n", o.udp ? "UDP" : "TCP", o.target.c_str(), o.port, o.unit);
-    const size_t holdingRegs = o.inSize / 2;
-    const size_t inputRegs = o.outSize / 2;
+    std::printf("Modbus %s client -> server %s:%u unit %u\n", o.udp ? "UDP" : "TCP", o.target.c_str(), o.port, o.unit);
+    const uint16_t holdingRegs = uint16_t(o.inSize / 2);
+    const uint16_t inputRegs = uint16_t(o.outSize / 2);
 
-    // ---- FC43/14 device identification -------------------------------
+    // ---- FC43/14 device identification (raw PDU) ---------------------
     {
-        auto r = m.request(pdu({0x2B, 0x0E, 0x01, 0x00}));
-        bool ok = r && r->size() > 7 && (*r)[0] == 0x2B && (*r)[6] == 3;
+        std::vector<uint8_t> r;
+        bool ok = c.transact(pdu({0x2B, 0x0E, 0x01, 0x00}), r).ok() && r.size() > 7 && r[6] == 3;
         std::string ident;
         if (ok) {
             size_t p = 7;
-            for (int i = 0; i < 3 && p + 2 <= r->size(); ++i) {
-                size_t len = (*r)[p + 1];
-                ident += (i ? " / " : "") + std::string(reinterpret_cast<const char*>(&(*r)[p + 2]), len);
+            for (int i = 0; i < 3 && p + 2 <= r.size(); ++i) {
+                size_t len = r[p + 1];
+                ident += (i ? " / " : "") + std::string(reinterpret_cast<const char*>(&r[p + 2]), len);
                 p += 2 + len;
             }
         }
@@ -234,137 +187,155 @@ int main(int argc, char** argv)
     }
 
     // ---- FC16 write multiple registers + FC03 read back --------------
-    std::vector<uint8_t> pattern(holdingRegs * 2);
-    for (size_t i = 0; i < pattern.size(); ++i)
-        pattern[i] = uint8_t(0xA0 + i);
+    std::vector<uint8_t> patternBytes(size_t(holdingRegs) * 2);
+    for (size_t i = 0; i < patternBytes.size(); ++i)
+        patternBytes[i] = uint8_t(0xA0 + i);
+    const std::vector<uint16_t> pattern = toRegs(patternBytes);
     {
-        std::vector<uint8_t> req{0x10};
-        be16(req, 0);
-        be16(req, holdingRegs);
-        req.push_back(uint8_t(pattern.size()));
-        req.insert(req.end(), pattern.begin(), pattern.end());
-        auto r = m.request(req);
-        check(r && r->size() == 5 && (*r)[0] == 0x10, "FC16 write " + std::to_string(holdingRegs) + " holding registers");
-        auto d = readData(m, 0x03, 0, holdingRegs);
-        check(d && *d == pattern, "FC03 read back equals written data");
+        Result w = c.writeMultipleRegisters(0, pattern);
+        check(w.ok(), "FC16 write " + std::to_string(holdingRegs) + " holding registers [" + w.text() + "]");
+        std::vector<uint16_t> d;
+        check(c.readHoldingRegisters(0, holdingRegs, d).ok() && d == pattern, "FC03 read back equals written data");
     }
 
     // ---- FC06 single register ----------------------------------------
     {
-        auto r = m.request(pdu({0x06, 0x00, 0x05, 0xBE, 0xEF}));
-        auto d = readData(m, 0x03, 5, 1);
-        check(r && *r == pdu({0x06, 0x00, 0x05, 0xBE, 0xEF}) && d && *d == pdu({0xBE, 0xEF}),
-              "FC06 write single register 5 = 0xBEEF");
+        std::vector<uint16_t> d;
+        bool ok = c.writeSingleRegister(5, 0xBEEF).ok() && c.readHoldingRegisters(5, 1, d).ok() && d[0] == 0xBEEF;
+        check(ok, "FC06 write single register 5 = 0xBEEF");
     }
 
     // ---- FC22 mask write ---------------------------------------------
     {
-        m.request(pdu({0x06, 0x00, 0x06, 0x12, 0x34}));
-        auto r = m.request(pdu({0x16, 0x00, 0x06, 0xF0, 0xF0, 0x05, 0x05}));
-        auto d = readData(m, 0x03, 6, 1);
-        check(r && r->size() == 7 && d && *d == pdu({0x15, 0x35}), "FC22 mask write (0x1234 & F0F0 | 0505 = 0x1535)");
+        std::vector<uint16_t> d;
+        bool ok = c.writeSingleRegister(6, 0x1234).ok() && c.maskWriteRegister(6, 0xF0F0, 0x0505).ok() &&
+                  c.readHoldingRegisters(6, 1, d).ok() && d[0] == 0x1535;
+        check(ok, "FC22 mask write (0x1234 & F0F0 | 0505 = 0x1535)");
     }
 
     // ---- FC23 read/write multiple ------------------------------------
     {
-        std::vector<uint8_t> req{0x17};
-        be16(req, 0);  // read start
-        be16(req, 12); // read qty
-        be16(req, 10); // write start
-        be16(req, 2);  // write qty
-        req.push_back(4);
-        for (int b : {0x11, 0x22, 0x33, 0x44})
-            req.push_back(uint8_t(b));
-        auto r = m.request(req);
-        bool ok = r && r->size() == 2 + 24 && (*r)[0] == 0x17 && (*r)[2 + 20] == 0x11 && (*r)[2 + 23] == 0x44 &&
-                  (*r)[2 + 10] == 0xBE; // register 5 from FC06 still there
+        std::vector<uint16_t> d;
+        bool ok = c.readWriteMultipleRegisters(0, 12, 10, {0x1122, 0x3344}, d).ok() && d.size() == 12 &&
+                  d[10] == 0x1122 && d[11] == 0x3344 && d[5] == 0xBEEF; // register 5 from FC06 still there
         check(ok, "FC23 write regs 10..11, read 0..11 in one request");
     }
 
     // ---- Coils: FC15 / FC05 / FC01 -----------------------------------
     {
-        const size_t coilStart = 400;
-        std::vector<uint8_t> req{0x0F};
-        be16(req, coilStart);
-        be16(req, 10);
-        req.push_back(2);
-        req.push_back(0xA5); // coils 400..407 = 1,0,1,0,0,1,0,1
-        req.push_back(0x02); // coil 409 = 1
-        auto r = m.request(req);
-        check(r && r->size() == 5 && (*r)[0] == 0x0F, "FC15 write 10 coils at 400");
-        m.request(pdu({0x05, 0x01, 0xC2, 0xFF, 0x00})); // coil 450 ON
-        auto d = readData(m, 0x01, coilStart, 10);
-        auto d2 = readData(m, 0x01, 450, 1);
-        check(d && *d == pdu({0xA5, 0x02}) && d2 && *d2 == pdu({0x01}), "FC01 read back coils, FC05 single coil 450");
+        const uint16_t coilStart = 400;
+        const std::vector<bool> coils = {true, false, true, false, false, true, false, true, false, true}; // 0xA5, 0x02
+        check(c.writeMultipleCoils(coilStart, coils).ok(), "FC15 write 10 coils at 400");
+        bool okSingle = c.writeSingleCoil(450, true).ok();
+        std::vector<bool> d, d2;
+        bool ok = okSingle && c.readCoils(coilStart, 10, d).ok() && d == coils && c.readCoils(450, 1, d2).ok() && d2[0];
+        check(ok, "FC01 read back coils, FC05 single coil 450");
         // Coils share the bytes of the holding registers: coil 400 = byte 50 bit 0 = register 25 high byte.
-        auto reg = readData(m, 0x03, 25, 1);
-        check(reg && (*reg)[0] == 0xA5, "coils and holding registers are the same input area");
+        std::vector<uint16_t> reg;
+        check(c.readHoldingRegisters(25, 1, reg).ok() && (reg[0] >> 8) == 0xA5,
+              "coils and holding registers are the same input area");
     }
 
     // ---- Echo through the application: FC04 / FC02 ------------------
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // demo app cycle is 10 ms
-        auto holding = readData(m, 0x03, 0, holdingRegs);
-        auto inputs = readData(m, 0x04, 0, inputRegs);
-        size_t n = std::min(holdingRegs, inputRegs) * 2;
-        bool echo = holding && inputs && n > 4 && std::memcmp(holding->data() + 4, inputs->data() + 4, n - 4) == 0;
+        std::vector<uint16_t> holding, inputs;
+        bool okH = c.readHoldingRegisters(0, holdingRegs, holding).ok();
+        bool okI = c.readInputRegisters(0, inputRegs, inputs).ok();
+        size_t n = std::min<size_t>(holdingRegs, inputRegs);
+        bool echo = okH && okI && n > 2 && std::equal(holding.begin() + 2, holding.begin() + std::ptrdiff_t(n),
+                                                      inputs.begin() + 2);
         check(echo, "FC04 input registers echo the holding registers (via the app, bytes 4..)");
-        auto bits = readData(m, 0x02, 32, 16); // discrete inputs 32..47 = output bytes 4..5
-        check(bits && inputs && (*bits)[0] == (*inputs)[4] && (*bits)[1] == (*inputs)[5],
-              "FC02 discrete inputs are the bit view of the output area");
-        auto hb1 = readData(m, 0x04, 0, 2);
+        std::vector<bool> bits; // discrete inputs 32..47 = output bytes 4..5 = input register 2
+        bool okB = c.readDiscreteInputs(32, 16, bits).ok() && okI;
+        bool same = okB;
+        for (size_t i = 0; okB && i < 16; ++i) {
+            const uint8_t byte = i < 8 ? uint8_t(inputs[2] >> 8) : uint8_t(inputs[2]);
+            same = same && bits[i] == bool((byte >> (i % 8)) & 1);
+        }
+        check(same, "FC02 discrete inputs are the bit view of the output area");
+        std::vector<uint16_t> hb1, hb2;
+        c.readInputRegisters(0, 2, hb1);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        auto hb2 = readData(m, 0x04, 0, 2);
-        check(hb1 && hb2 && *hb1 != *hb2, "application heartbeat (input registers 0..1) is running");
+        c.readInputRegisters(0, 2, hb2);
+        check(hb1.size() == 2 && hb2.size() == 2 && hb1 != hb2, "application heartbeat (input registers 0..1) is running");
     }
 
-    // ---- Exceptions ---------------------------------------------------
-    expectException(m, readRequest(0x03, holdingRegs, 1), 0x02, "FC03 beyond the holding table");
-    expectException(m, readRequest(0x04, inputRegs - 1, 2), 0x02, "FC04 crossing the end of the input registers");
-    expectException(m, readRequest(0x03, 0, 0), 0x03, "FC03 quantity 0");
-    expectException(m, readRequest(0x03, 0, 126), 0x03, "FC03 quantity 126");
-    expectException(m, readRequest(0x01, 0, 2001), 0x03, "FC01 quantity 2001");
-    expectException(m, pdu({0x05, 0x00, 0x00, 0x12, 0x34}), 0x03, "FC05 value not 0xFF00/0x0000");
+    // ---- Server exceptions --------------------------------------------
     {
-        std::vector<uint8_t> req{0x06};
-        be16(req, holdingRegs);
-        be16(req, 1);
-        expectException(m, req, 0x02, "FC06 beyond the holding table");
+        std::vector<uint16_t> d;
+        expectException(c.readHoldingRegisters(holdingRegs, 1, d), ex::kIllegalDataAddress, "FC03 beyond the holding table");
+        expectException(c.readInputRegisters(uint16_t(inputRegs - 1), 2, d), ex::kIllegalDataAddress,
+                        "FC04 crossing the end of the input registers");
+        expectException(c.writeSingleRegister(holdingRegs, 1), ex::kIllegalDataAddress, "FC06 beyond the holding table");
     }
-    expectException(m, pdu({0x07}), 0x01, "unsupported function code 07");
-    expectException(m, pdu({0x10, 0x00, 0x00, 0x00, 0x02, 0x03, 1, 2, 3}), 0x03, "FC16 byte count mismatch");
+    expectRawException(c, readRequest(fc::kReadHoldingRegisters, 0, 0), ex::kIllegalDataValue, "FC03 quantity 0 (raw)");
+    expectRawException(c, readRequest(fc::kReadHoldingRegisters, 0, 126), ex::kIllegalDataValue, "FC03 quantity 126 (raw)");
+    expectRawException(c, readRequest(fc::kReadCoils, 0, 2001), ex::kIllegalDataValue, "FC01 quantity 2001 (raw)");
+    expectRawException(c, pdu({0x05, 0x00, 0x00, 0x12, 0x34}), ex::kIllegalDataValue, "FC05 value not 0xFF00/0x0000 (raw)");
+    expectRawException(c, pdu({0x07}), ex::kIllegalFunction, "unsupported function code 07 (raw)");
+    expectRawException(c, pdu({0x10, 0x00, 0x00, 0x00, 0x02, 0x03, 1, 2, 3}), ex::kIllegalDataValue,
+                       "FC16 byte count mismatch (raw)");
+
+    // ---- Client-side validation (no bus traffic) ----------------------
+    {
+        std::vector<uint16_t> d;
+        std::vector<bool> b;
+        auto t0 = Clock::now();
+        bool ok = c.readHoldingRegisters(0, 0, d).code == ResultCode::InvalidArgument &&
+                  c.readHoldingRegisters(0, 126, d).code == ResultCode::InvalidArgument &&
+                  c.readCoils(0, 2001, b).code == ResultCode::InvalidArgument &&
+                  c.readInputRegisters(65535, 2, d).code == ResultCode::InvalidArgument &&
+                  c.writeMultipleRegisters(0, std::vector<uint16_t>(124, 0)).code == ResultCode::InvalidArgument &&
+                  c.writeMultipleCoils(0, std::vector<bool>(1969, false)).code == ResultCode::InvalidArgument;
+        double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        check(ok && ms < 50, "client rejects out-of-limit requests locally (InvalidArgument, no traffic)");
+    }
 
     // ---- Unit id filter -----------------------------------------------
     {
-        auto r = m.request(readRequest(0x03, 0, 1), uint8_t(o.unit == 7 ? 8 : 7));
-        check(!r, "request to another unit id gets no reply");
+        std::vector<uint8_t> r;
+        Result res = c.transact(readRequest(fc::kReadHoldingRegisters, 0, 1), r, o.unit == 7 ? 8 : 7);
+        check(res.code == ResultCode::Timeout, "request to another unit id gets no reply (client: " + res.text() + ")");
+        std::vector<uint16_t> d;
+        check(c.readHoldingRegisters(0, 1, d).ok(), "client recovers after a timeout (next request answered)");
     }
 
-    // ---- TCP pipelining -----------------------------------------------
+    // ---- TCP pipelining (raw) and reconnect ---------------------------
     if (!o.udp) {
-        std::vector<uint8_t> burst;
-        uint16_t tids[3];
-        for (int i = 0; i < 3; ++i) {
-            tids[i] = m.nextTid();
-            auto f = m.frame(readRequest(0x03, size_t(i), 1), o.unit, tids[i]);
-            burst.insert(burst.end(), f.begin(), f.end());
-        }
-        m.sendRaw(burst);
-        bool ok = true;
-        for (int i = 0; i < 3; ++i) {
-            auto r = m.receive(tids[i]);
-            ok = ok && r && r->size() == 4 && (*r)[2] == pattern[size_t(i) * 2] && (*r)[3] == pattern[size_t(i) * 2 + 1];
-        }
-        check(ok, "3 requests pipelined in one TCP segment, 3 ordered replies");
+        check(pipelineTest(o, pattern), "3 requests pipelined in one TCP segment, 3 ordered replies");
+        c.close();
+        std::vector<uint16_t> d;
+        check(c.readHoldingRegisters(0, 1, d).ok() && c.connected(), "client reconnects on demand after close()");
+    }
+
+    // ---- No server: timeout (UDP) / connection refused (TCP) ----------
+    {
+        ModbusClientConfig dead = cfg;
+        dead.port = uint16_t(o.port + 1); // nothing listens there
+        dead.responseTimeoutMs = 200;
+        dead.connectTimeoutMs = 500;
+        dead.retries = 1;
+        dead.onLog = nullptr;
+        ModbusClient none(dead);
+        std::vector<uint16_t> d;
+        auto t0 = Clock::now();
+        Result res = none.readHoldingRegisters(0, 1, d);
+        double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        const ResultCode want = o.udp ? ResultCode::Timeout : ResultCode::NotConnected;
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "no server on port %u -> %s after %.0f ms", unsigned(dead.port), res.text().c_str(), ms);
+        check(res.code == want && !none.connected() && ms < 1500, buf);
     }
 
     // ---- Request rate -------------------------------------------------
     {
         uint32_t count = 0, errors = 0;
+        std::vector<uint16_t> d;
         auto end = Clock::now() + std::chrono::seconds(o.seconds);
         auto start = Clock::now();
         while (Clock::now() < end) {
-            if (readData(m, 0x03, 0, holdingRegs))
+            if (c.readHoldingRegisters(0, holdingRegs, d).ok())
                 ++count;
             else
                 ++errors;
