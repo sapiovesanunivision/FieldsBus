@@ -7,12 +7,15 @@
 //                       [--in-size N] [--out-size N] [--seconds N]
 // Sizes must match the server (defaults match mb_server_demo: 64 / 64, unit 1).
 #include "softmb/modbus_client.hpp"
+#include "softmb/modbus_client_poller.hpp"
 #include "softmb/modbus_defs.hpp"
+#include "softmb/modbus_server.hpp"
 
 #include "softeip/bytes.hpp"
 #include "softeip/socket_compat.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -326,6 +329,118 @@ int main(int argc, char** argv)
         char buf[160];
         std::snprintf(buf, sizeof buf, "no server on port %u -> %s after %.0f ms", unsigned(dead.port), res.text().c_str(), ms);
         check(res.code == want && !none.connected() && ms < 1500, buf);
+    }
+
+    // ---- Cyclic poller (ModbusClientPoller) ---------------------------
+    // Output image -> server holding registers 0..15 and coils 400..415; server input registers 0..15
+    // and discrete inputs 32..47 -> input image. mb_server_demo echoes its input area into its output
+    // area (bytes 0..3 = heartbeat), so the input image must show our output bytes 4..31 back.
+    {
+        ModbusClientPollerConfig pc;
+        pc.client = cfg;
+        pc.client.onLog = nullptr;
+        pc.cycleMs = 10;
+        pc.inputSize = 34;
+        pc.outputSize = 34;
+        pc.writes = {{Table::HoldingRegisters, 0, 16, 0}, {Table::Coils, 400, 16, 32}};
+        pc.reads = {{Table::InputRegisters, 0, 16, 0}, {Table::DiscreteInputs, 32, 16, 32}};
+        std::atomic<int> changes{0};
+        pc.onInputsChanged = [&](const std::vector<uint8_t>&) { ++changes; };
+
+        ModbusClientPollerConfig bad = pc;
+        bad.writes.push_back({Table::InputRegisters, 0, 1, 0});
+        std::string badErr;
+        const bool badStarted = ModbusClientPoller(bad).start(&badErr); // evaluate before building the message
+        check(!badStarted && !badErr.empty(), "poller rejects a write to input registers: " + badErr);
+
+        ModbusClientPoller poller(pc);
+        std::vector<uint8_t> out(34);
+        for (size_t i = 0; i < 32; ++i)
+            out[i] = uint8_t(0x30 + i);
+        out[32] = 0x5A;
+        out[33] = 0xC3;
+        poller.ioWrite(0, out.data(), out.size());
+        std::string err;
+        bool started = poller.start(&err);
+        bool echo = false;
+        std::vector<uint8_t> in(34);
+        auto deadline = Clock::now() + std::chrono::seconds(2);
+        while (started && !echo && Clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            poller.ioRead(0, in.data(), in.size());
+            echo = std::equal(in.begin() + 4, in.begin() + 32, out.begin() + 4) && in[32] == out[4] && in[33] == out[5];
+        }
+        check(started && echo && poller.online(),
+              "poller: output image -> holding regs, echo back via input regs + discrete inputs (10 ms cycle)");
+        std::vector<uint16_t> coilReg;
+        check(c.readHoldingRegisters(25, 1, coilReg).ok() && coilReg[0] == 0x5AC3,
+              "poller: output image -> coils 400..415 reached the server (register 25 = 0x5AC3)");
+        uint8_t hb1[4], hb2[4];
+        poller.ioRead(0, hb1, 4);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        poller.ioRead(0, hb2, 4);
+        check(std::memcmp(hb1, hb2, 4) != 0 && changes > 0, "poller: input image follows the server (heartbeat, onInputsChanged)");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        auto st = poller.stats();
+        poller.stop();
+        char buf[200];
+        std::snprintf(buf, sizeof buf,
+                      "poller stats: %llu cycles, %llu failed, cycle %.2f ms (max %.2f), max period %.2f ms",
+                      static_cast<unsigned long long>(st.cycles), static_cast<unsigned long long>(st.failedCycles),
+                      st.lastCycleMs, st.maxCycleMs, st.maxPeriodMs);
+        check(st.cycles > 50 && st.failedCycles == 0, buf);
+    }
+
+    // ---- Poller splitting: areas above the protocol limits --------------
+    // In-process ModbusServer (same library) with 600-byte areas on port+2. The poller writes 300
+    // holding registers (3 x <=123) and reads them back (3 x <=125); it also reads the same bytes as
+    // 4800 coils (3 x <=2000), which must equal the register bytes (coils and holding registers
+    // share the server's input area; bit i = byte i/8, bit i%8).
+    {
+        ModbusServerConfig sc;
+        sc.bindAddress = o.target;
+        sc.port = uint16_t(o.port + 2);
+        sc.enableTcp = !o.udp;
+        sc.enableUdp = o.udp;
+        sc.inputSize = 600;
+        sc.outputSize = 2;
+        sc.raiseThreadPriority = false;
+        ModbusServer big(sc);
+        std::string serr;
+        bool serverUp = big.start(&serr);
+
+        ModbusClientPollerConfig pc;
+        pc.client = cfg;
+        pc.client.port = sc.port;
+        pc.client.onLog = nullptr;
+        pc.cycleMs = 20;
+        pc.inputSize = 1200;
+        pc.outputSize = 600;
+        pc.writes = {{Table::HoldingRegisters, 0, 300, 0}};
+        pc.reads = {{Table::HoldingRegisters, 0, 300, 0}, {Table::Coils, 0, 4800, 600}};
+        ModbusClientPoller poller(pc);
+        std::vector<uint8_t> out(600);
+        for (size_t i = 0; i < out.size(); ++i)
+            out[i] = uint8_t(i * 7 + 3);
+        poller.ioWrite(0, out.data(), out.size());
+        std::string perr;
+        bool ok = serverUp && poller.start(&perr);
+        std::vector<uint8_t> in(1200);
+        auto deadline = Clock::now() + std::chrono::seconds(3);
+        bool same = false;
+        while (ok && !same && Clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            poller.ioRead(0, in.data(), in.size());
+            same = std::equal(out.begin(), out.end(), in.begin()) && std::equal(out.begin(), out.end(), in.begin() + 600);
+        }
+        auto st = poller.stats();
+        poller.stop();
+        big.stop();
+        char buf[200];
+        std::snprintf(buf, sizeof buf,
+                      "poller splits 300 registers (write 3x, read 3x) and 4800 coils (read 3x): round trip equal, cycle %.2f ms%s%s",
+                      st.lastCycleMs, serverUp ? "" : " [server: ", serverUp ? "" : (serr + "]").c_str());
+        check(ok && same && st.failedCycles == 0, buf);
     }
 
     // ---- Request rate -------------------------------------------------
