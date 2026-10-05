@@ -31,6 +31,8 @@ Windows-specific parts have **never been compiled**.
 | `CMakePresets.json` / `generate_vs2026.bat` (generator `Visual Studio 18 2026`) | ✅ works; VS 2026 writes **`SoftFieldbus.slnx`** |
 | `dotnet/` C++/CLI wrapper `SoftEip.Net.dll` + C# sample `SoftEipSample` | ✅ builds (Release + Debug, 0 warnings); C# sample PASS 500/500 |
 | Real PLC test | ❌ not done |
+| **Phase 6:** `softmb` Modbus TCP/UDP slave, `softfieldbus` (`FieldbusDevice`), `mb_*` / `fb_device_demo` tools | ✅ Linux: all tests pass, pymodbus interop OK. ⚠️ never compiled with MSVC |
+| **Phase 6:** `SoftFieldbus.Net.dll` + C# `SoftFieldbusSample` | ⚠️ written, **never compiled**; follows the Windows-verified `SoftEip.Net` pattern |
 
 > **Update (2026-10-05, Windows session):** steps 1–6 below are done. The results and the six fixes are in
 > `docs/phases/phase-5-dotnet-wrapper.md` → "Windows results". The most important finding is that Windows 11
@@ -89,6 +91,24 @@ Then run `build\vs2026\bin\Release\SoftEipSample.exe` together with the simulato
 - Add a "Windows results" table, like the one in phase 3, with timings and any jitter you observe.
 - Commit to the branch with a descriptive message.
 
+### Phase 6 on Windows (Modbus + FieldbusDevice + SoftFieldbus.Net)
+1. Regenerate (`generate_vs2026.bat`) and build the whole solution: new targets `softmb`, `softfieldbus`,
+   `mb_slave_demo`, `mb_master_sim`, `fb_device_demo`, `SoftFieldbus.Net`, `SoftFieldbusSample`. 0 warnings.
+2. Native Modbus (port 502 needs no admin on Windows; allow TCP+UDP 502 in the firewall):
+   ```bat
+   build\vs2026\bin\Release\mb_slave_demo.exe
+   build\vs2026\bin\Release\mb_master_sim.exe --transport tcp
+   build\vs2026\bin\Release\mb_master_sim.exe --transport udp
+   ```
+   Expect `RESULT: PASS` for both.
+3. One app on every transport:
+   ```bat
+   fb_device_demo.exe --transport eip              + eip_scanner_sim.exe --in-size 64 --out-size 64 --local-port 2223
+   fb_device_demo.exe --transport modbus --unit 1  + mb_master_sim.exe --transport tcp  (then udp)
+   ```
+4. .NET: `SoftFieldbusSample.exe eip`, then `SoftFieldbusSample.exe modbus`, each with the matching simulator. Expect PASS.
+5. Record the results in `docs/phases/phase-6-modbus.md` (tick 6c, add a "Windows results" table) and commit.
+
 ## 4. Likely trouble spots (and the intended fix)
 
 | Symptom | Where | Fix |
@@ -103,6 +123,9 @@ Then run `build\vs2026\bin\Release\SoftEipSample.exe` together with the simulato
 | `FileNotFoundException: Ijwhost.dll` at runtime | .NET 8/10 C++/CLI | `Ijwhost.dll` must be next to `SoftEip.Net.dll` in `bin\<Config>` |
 | `BadImageFormatException` | C# app is AnyCPU or x86 | The app must be **x64** |
 | `cannot bind TCP 44818` | Another EtherNet/IP stack is running: RSLinx, a Hilscher driver, a second demo | Stop it, or use `BindAddress` / `--bind` with a specific NIC IP |
+| Same /clr issues in `SoftFieldbus.Net` | `dotnet/SoftFieldbusNet.*`, `softfb_clr_assembly()` in `dotnet/CMakeLists.txt` | Fix it the way `SoftEip.Net` was fixed. Both assemblies share the CMake function, so the fix covers both |
+| `SoftFieldbusSample` can't load `SoftFieldbus.Net.dll` | template `dotnet/fieldbus_sample/SoftFieldbusSample.csproj.in` | Keep `<Private>true</Private>`; it's the same deps.json issue as SoftEipSample |
+| `cannot bind TCP 502` | another Modbus server (an OPC/Modbus gateway, a second demo) | Stop it, or use another `--port` / `ModbusPort` |
 | `winsock2.h` / `windows.h` redefinition in MFC apps | Including order | Only `eip_adapter.hpp` is public, and it doesn't include winsock. Don't include `socket_compat.hpp` from app code |
 
 ## 5. Next tasks after Windows is green (in priority order)

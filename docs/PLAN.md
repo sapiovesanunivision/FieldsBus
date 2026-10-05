@@ -80,3 +80,7 @@ Outcome of this step: a working EtherNet/IP adapter library plus a demo, and a s
 - **VS 2026 solution generation:** `CMakePresets.json` + `generate_vs2026.bat`
 - **Phase 5, .NET wrapper:** C++/CLI `SoftEip.Net.dll` + C# sample + optional native DLL.
   See `docs/phases/phase-5-dotnet-wrapper.md`.
+- **Phase 6:** Modbus TCP/UDP slave (`softmb`) and the transport-independent, Hilscher-style
+  `FieldbusDevice` API (C++ `softfieldbus`, .NET `SoftFieldbus.Net`). Process image in PC view:
+  input area = PLC → PC (`ioRead`), output area = PC → PLC (`ioWrite`).
+  See `docs/phases/phase-6-modbus.md`. Deferred: single-bit/named-variable access, Modbus RTU.

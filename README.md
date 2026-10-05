@@ -1,5 +1,12 @@
 # FieldsBus: software fieldbus device for Windows (C++)
 
+Software-only fieldbus **devices** ("slaves") for a standard Windows PC NIC, all behind one
+**Hilscher-style process-image API** (see [One API for every fieldbus](#one-api-for-every-fieldbus)):
+- **EtherNet/IP adapter** (`softeip`)
+- **Modbus TCP / Modbus UDP slave** (`softmb`)
+
+The EtherNet/IP adapter is described first; the Modbus slave and the common API follow.
+
 A software-only **EtherNet/IP adapter** (I/O device / "slave") that runs on a standard Windows PC NIC.
 It replaces a Hilscher netX/cifX card where cycle times of roughly 10 ms or more are good enough.
 The PLC stays the master (scanner): it opens the connection and exchanges cyclic I/O with the PC.
@@ -175,6 +182,85 @@ can lag one cycle at each change; that's expected, not a loss. Details and the f
 `docs/phases/phase-3-demo-and-sim.md` (Linux) and `docs/phases/phase-5-dotnet-wrapper.md` → "Windows results".
 Not yet measured: per-packet RPI jitter and a real PLC (next roadmap item).
 
+## One API for every fieldbus
+
+`softfb::FieldbusDevice` (C++) and `SoftFieldbus.FieldbusDevice` (.NET) work like a Hilscher cifX channel.
+The application only sees two fixed byte areas, named from the **PC's point of view**:
+
+| Area | Direction | API | cifX equivalent |
+|---|---|---|---|
+| **Input area** | PLC → PC | `ioRead(offset, data, len)` | `xChannelIORead` |
+| **Output area** | PC → PLC | `ioWrite(offset, data, len)` | `xChannelIOWrite` |
+
+The PC and the PLC agree on a layout (for example a shared struct) and cast the bytes. Changing fieldbus is
+a configuration change; the application code stays the same:
+
+```cpp
+#include "softfb/fieldbus_device.hpp"
+
+softfb::DeviceConfig cfg;
+cfg.transport = softfb::Transport::ModbusTcp;   // EtherNetIP, ModbusTcp, ModbusUdp, ModbusTcpUdp
+cfg.inputSize = 64;                             // bytes PLC -> PC
+cfg.outputSize = 64;                            // bytes PC -> PLC
+cfg.onStateChanged = [](softfb::DeviceState s) { /* WaitingForMaster, ConnectedRun, ... */ };
+
+softfb::FieldbusDevice dev(cfg);
+dev.start();
+dev.ioRead(0, &fromPlc, sizeof fromPlc);
+dev.ioWrite(0, &toPlc, sizeof toPlc);
+```
+
+```csharp
+var cfg = new FieldbusDeviceConfig { Transport = FieldbusTransport.EtherNetIP, InputSize = 64, OutputSize = 64 };
+using var dev = new FieldbusDevice(cfg);      // SoftFieldbus.Net.dll
+dev.Start();
+byte[] fromPlc = dev.IoRead();
+dev.IoWrite(0, toPlc);
+```
+
+Where the areas live on each bus:
+
+| Transport | Input area (PLC → PC) | Output area (PC → PLC) |
+|---|---|---|
+| EtherNet/IP | O→T output assembly 150 (with 32-bit run/idle header) | T→O input assembly 100 |
+| Modbus | holding registers (FC03/06/16/22/23) and coils (FC01/05/15) | input registers (FC04) and discrete inputs (FC02) |
+
+`fb_device_demo --transport eip|modbus-tcp|modbus-udp|modbus` and the C# `SoftFieldbusSample` run the same echo
+application on every transport.
+
+**About endianness:** Modbus registers are big-endian on the wire, and the area keeps that byte order (register k = bytes
+2k high, 2k+1 low). EtherNet/IP data is copied as is. Agree on the byte order of multi-byte values with the PLC
+programmer. For example, a float written by a Siemens PLC over Modbus arrives big-endian.
+
+## Modbus TCP / UDP slave
+
+`softmb::ModbusSlave` is a Modbus server on **TCP and/or UDP port 502**, with MBAP framing on both.
+
+| Modbus table | Function codes | Area | Master access |
+|---|---|---|---|
+| Holding registers 0 … inputSize/2-1 | 03, 06, 16, 22, 23 | input area (PLC → PC) | read and write |
+| Coils 0 … inputSize·8-1 (bit i = byte i/8, bit i%8) | 01, 05, 15 | input area, bit view | read and write |
+| Input registers 0 … outputSize/2-1 | 04 | output area (PC → PLC) | read |
+| Discrete inputs (same bit mapping) | 02 | output area, bit view | read |
+| Optional `outputsInHoldingAt = k` | 03 | output area, read-only from holding register k | read |
+
+- FC 43/14 (device identification) returns VendorName, ProductCode and Revision.
+- Exceptions follow the spec: 01 illegal function, 02 illegal address, 03 illegal value.
+- **Unit id:** `unitId = 0` answers every unit id. Any other value answers only that id, plus 0xFF and 0 (the values masters use to address a TCP device directly). Other ids get no reply.
+- **Addressing:** many masters and HMIs number from 1 ("40001" = holding register **0**, "30001" = input register 0).
+- **Masters that only use FC03/FC16** (some PLC function blocks): set `outputsInHoldingAt`, for example to 1000, to make the output area readable as holding registers.
+- **Firewall:** allow inbound **TCP 502 and UDP 502**. Windows needs no admin rights for port 502 (Linux does; the tests use 1502).
+- **RTU over serial** is not implemented (no COM ports on modern PCs). The PDU engine (`processPdu`) is transport independent, so RTU over a USB-RS485 adapter or RTU-over-TCP can be added.
+
+**Testing without a PLC:**
+```sh
+mb_slave_demo --port 1502            # unit 1, 64 B input / 64 B output, echo + heartbeat
+mb_master_sim --port 1502 --transport tcp    # or udp: 24 checks, RESULT: PASS
+```
+`mb_master_sim` covers every function code, the exception cases, the unit filter, TCP pipelining and the polling
+rate (about 26 000 requests/s on loopback). Interop with [pymodbus](https://github.com/pymodbus-dev/pymodbus) 3.15 was
+also checked; results are in `docs/phases/phase-6-modbus.md`.
+
 ## Connecting a real PLC
 
 ### Rockwell Studio 5000 (Generic Ethernet Module, no EDS needed)
@@ -209,7 +295,10 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
 2. **Multicast T→O.** Some PLCs default to it, and listen-only connections only really work with it.
 3. **TCP/IP (0xF5) and Ethernet Link (0xF6) objects.** The conformance test requires them, and some scanners read them.
 4. **Class-3 explicit messaging** (MSG instructions to read/write assemblies or parameters).
-5. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
+5. **Single bit and named variable access** on top of `ioRead`/`ioWrite`: `ioReadBit`/`ioWriteBit`, plus a
+   variable map (name, type, offset, bit, byte order) shared with the PLC project, with typed get/set by name.
+6. **Modbus RTU** over USB-RS485 adapters / RTU-over-TCP (reuses the Modbus PDU engine).
+7. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
    This is a large effort, about 5–10× the work of EtherNet/IP. An alternative is porting p-net (GPL or commercial license) to Npcap.
 
 **Build vs. reuse:** [OpENer](https://github.com/EIPStackGroup/OpENer) is a mature open-source EtherNet/IP adapter in C
@@ -219,10 +308,12 @@ If you plan formal ODVA conformance, compare effort against OpENer or a commerci
 ## Repository layout
 
 ```
-include/softeip/   public API (eip_adapter.hpp) + protocol helpers
-src/               adapter implementation
-dotnet/            C++/CLI wrapper (SoftEip.Net.dll) + C# sample
-examples/          demo device
-tools/             PLC/scanner simulator
+include/softfb/    FieldbusDevice: one Hilscher-style API for every transport
+include/softeip/   EtherNet/IP adapter API + shared socket/byte helpers
+include/softmb/    Modbus TCP/UDP slave API
+src/               implementations
+dotnet/            C++/CLI wrappers (SoftFieldbus.Net.dll, SoftEip.Net.dll) + C# samples
+examples/          demo devices (fb_device_demo, eip_adapter_demo, mb_slave_demo)
+tools/             PLC/master simulators (eip_scanner_sim, mb_master_sim)
 docs/              plan, phase documents, HANDOFF.md (Windows build/verify steps)
 ```

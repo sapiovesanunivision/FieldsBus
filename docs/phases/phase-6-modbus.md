@@ -43,7 +43,8 @@ FC 43/14 (device identification, basic objects) is also supported.
 - [ ] **Build and run on Windows / VS 2026.** This can't be done in the Linux container (no MSVC / C++/CLI); see `docs/HANDOFF.md` §6
 
 ### 6d: Docs
-- [ ] README Modbus section, HANDOFF, roadmap
+- [x] README: "One API for every fieldbus" and "Modbus TCP / UDP slave" sections, roadmap, repo layout
+- [x] HANDOFF: phase-6 status rows, Windows steps, trouble spots
 
 ## Results 6a (Linux, loopback, port 1502)
 | Test | TCP | UDP |
