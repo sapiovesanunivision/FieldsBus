@@ -155,6 +155,26 @@ It tells the adapter which port to use through a Sockaddr Info item, the same wa
 Other options (`--in-size`, `--out-size`, `--o2t 198`, `--skip-close 1`, ...) exercise the error paths.
 `docs/phases/phase-3-demo-and-sim.md` lists them with their results.
 
+### Test results (loopback, RPI 10 ms, 5 s)
+
+| Test | Expected | Linux (g++) | Windows 11 (VS 2026) |
+|---|---|---|---|
+| Build, `/W4` / `-Wall -Wextra` | 0 warnings | ✅ 0 | ✅ 0 (Release + Debug, whole solution incl. C++/CLI + C#) |
+| Happy path, `eip_adapter_demo` | ~500 T→O, echo, Forward_Close OK | ✅ 496–500/500 | ✅ 499–500/500 |
+| Happy path, `SoftEipSample` (C#) | PASS | (Windows only) | ✅ 500/500 ×3 |
+| O→T size 30 (adapter 32) | 0x0127 | ✅ | ✅ |
+| T→O size 16 (adapter 32) | 0x0128 | ✅ | ✅ |
+| RPI 1 ms (min 2 ms) | 0x0111 | ✅ | ✅ |
+| O→T instance 155 | 0x0117 | ✅ | ✅ |
+| Second exclusive owner | 0x0106 | ✅ | ✅ (first owner unaffected) |
+| Input-only (198) | accepted | ✅ | ✅ 199/200 T→O |
+| `--skip-close` | watchdog closes after 8×RPI | ✅ ~80 ms | ✅ "connection timed out" |
+
+Echo matches are typically 450–490 out of 500. The simulator changes its outputs every 100 ms, and the echo
+can lag one cycle at each change; that's expected, not a loss. Details and the fixes made for Windows:
+`docs/phases/phase-3-demo-and-sim.md` (Linux) and `docs/phases/phase-5-dotnet-wrapper.md` → "Windows results".
+Not yet measured: per-packet RPI jitter and a real PLC (next roadmap item).
+
 ## Connecting a real PLC
 
 ### Rockwell Studio 5000 (Generic Ethernet Module, no EDS needed)
@@ -175,6 +195,10 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
 
 ### Windows checklist
 - Firewall: allow inbound **TCP 44818, UDP 44818 and UDP 2222** for the executable.
+- Timer resolution: Windows 11 ignores `timeBeginPeriod(1)` for processes without a visible window (a minimized HMI,
+  a service). The library opts out of that power throttling itself, so the 1 ms resolution holds; without the
+  opt-out, RPI 10 ms delivered only ~85 % of the packets. Apps that create their own timing loops should use a
+  high-resolution waitable timer, as `eip_adapter_demo` does.
 - Use a dedicated NIC for the machine network. Disable its power saving and interrupt moderation.
 - Keep the PC's IP static.
 - The vendor ID default is `0xFFFF` (a placeholder). Use your company's ODVA vendor ID for any product.
