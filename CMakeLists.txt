@@ -62,12 +62,34 @@ add_executable(eip_scanner_sim tools/eip_scanner_sim.cpp)
 target_link_libraries(eip_scanner_sim PRIVATE softeip)
 softeip_warnings(eip_scanner_sim)
 
+# ---- Modbus slave (TCP + UDP) ----------------------------------------------
+add_library(softmb STATIC src/modbus_slave.cpp include/softmb/modbus_slave.hpp)
+target_include_directories(softmb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(softmb PUBLIC Threads::Threads)
+softeip_warnings(softmb)
+if(WIN32)
+    target_link_libraries(softmb PUBLIC ws2_32 winmm)
+    target_compile_definitions(softmb PUBLIC _WIN32_WINNT=0x0601)
+endif()
+
+add_executable(mb_slave_demo examples/mb_slave_demo.cpp)
+target_link_libraries(mb_slave_demo PRIVATE softmb)
+softeip_warnings(mb_slave_demo)
+
+add_executable(mb_master_sim tools/mb_master_sim.cpp)
+target_link_libraries(mb_master_sim PRIVATE softmb)
+softeip_warnings(mb_master_sim)
+
 # Visual Studio solution niceties
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT eip_adapter_demo)
 set_target_properties(softeip PROPERTIES FOLDER "native")
 set_target_properties(eip_adapter_demo PROPERTIES FOLDER "examples")
 set_target_properties(eip_scanner_sim PROPERTIES FOLDER "tools"
     VS_DEBUGGER_COMMAND_ARGUMENTS "--target 127.0.0.1 --rpi-ms 10 --seconds 5 --local-port 2223")
+set_target_properties(softmb PROPERTIES FOLDER "native")
+set_target_properties(mb_slave_demo PROPERTIES FOLDER "examples")
+set_target_properties(mb_master_sim PROPERTIES FOLDER "tools"
+    VS_DEBUGGER_COMMAND_ARGUMENTS "--target 127.0.0.1 --transport tcp")
 
 if(SOFTEIP_BUILD_DOTNET)
     if(NOT MSVC OR NOT CMAKE_GENERATOR MATCHES "Visual Studio")
