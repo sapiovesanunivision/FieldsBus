@@ -8,7 +8,14 @@ Windows-specific parts have **never been compiled**.
 
 - **Goal:** a software-only EtherNet/IP *adapter* (I/O device) in C++ that runs inside our Windows apps.
   It replaces a Hilscher card when cycle times of 10 ms or more are good enough. The PLC is the scanner/master.
-- **Branch:** `claude/software-fieldbus-solution-yp9gxc`. Commit there and don't open a PR unless asked.
+- **Repository:** https://github.com/sapiovesanunivision/FieldsBus
+- **Branch:** `claude/software-fieldbus-solution-yp9gxc`
+  (https://github.com/sapiovesanunivision/FieldsBus/tree/claude/software-fieldbus-solution-yp9gxc).
+  Commit there and don't open a PR unless asked.
+  ```bat
+  git clone -b claude/software-fieldbus-solution-yp9gxc https://github.com/sapiovesanunivision/FieldsBus.git
+  cd FieldsBus
+  ```
 - **Read first:**
   - `README.md`: what is implemented, PLC setup, usage
   - `docs/PLAN.md`: the original plan and its follow-ups
