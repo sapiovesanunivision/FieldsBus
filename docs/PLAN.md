@@ -84,3 +84,121 @@ Outcome of this step: a working EtherNet/IP adapter library plus a demo, and a s
   `FieldbusDevice` API (C++ `softfieldbus`, .NET `SoftFieldbus.Net`). Process image in PC view:
   input area = PLC → PC (`ioRead`), output area = PC → PLC (`ioWrite`).
   See `docs/phases/phase-6-modbus.md`. Deferred: single-bit/named-variable access, Modbus RTU.
+
+---
+
+## Phase 6 plan: Modbus slave (TCP + UDP) and Hilscher-style FieldbusDevice API
+
+### Context
+Besides EtherNet/IP, the team needs a software **Modbus slave (server)** on Windows. A PLC or SCADA master polls it over **Modbus TCP and Modbus UDP**.
+- **RTU (serial)** is deferred, because modern PCs no longer have COM ports. The design keeps the PDU layer independent of the transport, so RTU or RTU-over-TCP can be added later.
+- **Location:** the user chose the same repo (FieldsBus) as a new library `softmb` next to `softeip`.
+
+**Difficulty:** low. Modbus is request/response and has no cyclic I/O or connection management. It's roughly ⅓ of the EtherNet/IP work.
+
+### Reuse
+- `include/softeip/socket_compat.hpp`: Winsock/POSIX, `SocketLibrary` (incl. Win11 timer fix), `sendAll`, `sendTo`/`recvFrom`, `disableUdpConnReset`.
+- `include/softeip/bytes.hpp`: `ByteWriter::u16be`, `ByteReader::u16be` (Modbus is big-endian).
+- **Structure:** follow the patterns of `src/eip_adapter.cpp` (pimpl, one `select()` network thread, the TCP client reassembly loop, thread-safe process image with a mutex, callbacks) and of `dotnet/` (C++/CLI wrapper, CMake `/clr` handling, C# sample via `include_external_msproject`).
+- **CMake:** in `CMakeLists.txt`, use the `softeip_warnings()` function and the common `bin/` output folder.
+- **Shared headers:** keep them where they are to avoid churn in the Windows-verified code, and expose them through a small CMake INTERFACE target `softfieldbus_common` that both libs link.
+
+### Guiding principle: a cifX-like process image, **PC view** (user requirement)
+Every transport exposes the same two **fixed byte areas**, named from the PC's point of view as Hilscher does:
+- **Input area** (PLC → PC): the master writes it, the app reads it (`ioRead`).
+- **Output area** (PC → PLC): the app writes it, the master reads it (`ioWrite`).
+
+The PC and the PLC each cast these bytes to agreed data types (a shared struct or layout document). A thin layer selects the transport, so the app code stays the same.
+
+**Naming note:** `softeip` keeps the CIP device-view names it already has, and these are the opposite way round:
+- its input assembly 100 (T→O) is the PC **output** area
+- its output assembly 150 (O→T) is the PC **input** area
+
+The new layer hides this. `softmb` and the layer both use the PC view.
+
+### Library `softmb`
+**Modbus mapping onto the two areas.** Wire byte order equals area byte order: register k is bytes [2k] (high) and [2k+1] (low).
+
+| Modbus table (master's view) | Function codes | PC area (Hilscher PC view) | Master access |
+|---|---|---|---|
+| Holding registers 0..m | FC03/06/16/22/23 | **input area** (PLC → PC) | read and write |
+| Coils (bit i = byte i/8, bit i%8) | FC01/05/15 | **input area** (same bytes, bit view) | read and write |
+| Input registers 0..n | FC04 | **output area** (PC → PLC) | read |
+| Discrete inputs (same bit mapping) | FC02 | **output area** (bit view) | read |
+| Optional `outputsInHoldingAt = k` | FC03 | output area mirrored read-only at holding k… | for masters that only speak FC03/FC16; writes there → exception 02 |
+
+**Public header** `include/softmb/modbus_slave.hpp`, no winsock (pimpl):
+- **`ModbusSlaveConfig`:**
+  - `bindAddress`, `port = 502`, `enableTcp = true`, `enableUdp = true`
+  - `unitId` (0 = answer any unit)
+  - `inputSize` (PLC → PC) and `outputSize` (PC → PLC), in bytes (even; default 64 each)
+  - `outputsInHoldingAt` (optional)
+  - `maxTcpClients = 8`, `tcpIdleTimeoutMs`
+  - identity strings for FC 43/14
+  - callbacks `onLog` and `onInputsChanged(const std::vector<uint8_t>&)` (the master wrote), plus `onConnectionChanged`
+- **`ModbusSlave`:** PC-view API
+  - `start` / `stop`
+  - `ioRead(offset, data, len)`: reads the input area (PLC → PC)
+  - `ioWrite(offset, data, len)`: writes the output area (PC → PLC)
+  - `inputData()`: snapshot of the input area
+  - `masterConnected()`: a TCP client is connected, or a request arrived within the watchdog time
+
+**`src/modbus_slave.cpp`:**
+- **PDU core:** `processPdu(const uint8_t*, size_t) -> response PDU`. It's transport-independent and reusable for RTU later.
+  - **Function codes:** 01, 02, 03, 04, 05, 06, 15, 16, 22 (mask write), 23 (read/write multiple) and 43/14 (device identification, basic objects).
+  - **Limits:** 2000 bits / 125 registers read, 1968 bits / 123 registers write.
+  - **Exceptions:** 01 illegal function, 02 illegal address, 03 illegal value.
+- **TCP on port 502:** MBAP header (transaction, protocol = 0, length, unit). Stream reassembly per client; several requests in one segment are handled; the protocol id and length are validated; misbehaving clients are dropped; idle timeout.
+- **UDP on port 502:** same MBAP framing, one request per datagram, reply to the sender.
+- **Unit-id filter:** a non-matching unit gets no reply, like a gateway with no target.
+
+### Tools, demo, .NET
+- **`examples/mb_slave_demo.cpp`:** copies the input area (what the PLC wrote) into the output area, with bytes 0..3 used as a heartbeat (the same idea as the EtherNet/IP demo). It logs input changes. Options: `--port`, `--no-udp`, `--unit`, `--in-size`, `--out-size`.
+- **`tools/mb_master_sim.cpp`:** a test master over `--transport tcp|udp`.
+  - Exercises every function code and checks the values against what was written.
+  - Exception cases: bad address → 02, bad quantity → 03, unknown function code → 01.
+  - Wrong unit id → timeout.
+  - Several requests pipelined in one TCP segment.
+  - Exits 0 or 1 with `RESULT: PASS/FAIL`.
+- **CMake:** add `softmb`, `mb_slave_demo` and `mb_master_sim`.
+
+### Thin transport-selection layer (prepared now, tiny)
+Both protocols share the same process-image API, so the layer is small and can be added now or later without touching the protocol code:
+- **`include/softfb/fieldbus_device.hpp`:**
+  - `enum class Transport { EtherNetIP, ModbusTcp, ModbusUdp, ModbusTcpUdp }`
+  - `struct DeviceConfig { Transport; bindAddress; inputSize; outputSize; protocol-specific sub-structs }`
+  - `class FieldbusDevice` (pimpl, created from `DeviceConfig`), shaped like cifX:
+    - `start` / `stop`
+    - `ioWrite(offset, data, len)`: PC → PLC, like `xChannelIOWrite`
+    - `ioRead(offset, data, len)`: PLC → PC, like `xChannelIORead`
+    - `state()`: Stopped / WaitingForMaster / Connected (Run/Idle)
+    - `onInputsChanged` (the PLC wrote new data)
+- **`src/fieldbus_device.cpp`:** dispatches to `softeip::Adapter` or `softmb::ModbusSlave`. Library `softfieldbus` links both.
+- **.NET:** one new C++/CLI assembly `SoftFieldbus.Net.dll` with a `FieldbusDevice` class and a `Transport` enum (`byte[]` `IoRead`/`IoWrite`, events), built with the existing `/clr` CMake settings (factored into a function). `SoftEip.Net` stays unchanged, because it's already Windows-verified. There is no separate Modbus .NET wrapper; C# uses the generic one.
+- **`examples/fb_device_demo.cpp`:** `--transport eip|modbus-tcp|modbus-udp|modbus` runs the same echo app on any transport. This proves the abstraction with both existing simulators.
+
+### Later (recorded, not in this phase)
+- **Single coil / single register access** on top of the byte areas, e.g. `ioReadBit(bitOffset)` / `ioWriteBit`.
+- **Variable accessibility:** a variable map (name, data type, offset, bit), loaded from a JSON/CSV file shared by the PC and PLC projects, with typed get/set by name (`dev.get<float>("Speed")`) and optional endianness/word-swap per variable. It sits on top of `ioRead`/`ioWrite`, so it works for every transport.
+- Modbus RTU (USB-RS485) / RTU-over-TCP.
+
+### Docs
+- `docs/phases/phase-6-modbus.md`: checklist and results table.
+- README: a Modbus section with a register-map table, master setup (port 502, unit id, 0- vs 1-based addressing note) and firewall (TCP+UDP 502).
+- `docs/HANDOFF.md`: Windows verification steps for the Modbus parts.
+- Roadmap: RTU over USB-RS485 adapters / RTU-over-TCP.
+
+### Verification (Linux here; Windows via HANDOFF)
+1. `cmake --preset linux && cmake --build --preset linux` builds with 0 warnings. The EtherNet/IP tests still pass.
+2. Run `mb_slave_demo --port 1502` (Linux needs root for <1024; Windows doesn't). Then `mb_master_sim --port 1502 --transport tcp` and `--transport udp` must both PASS, including all the exception cases.
+3. Independent interop check, if pip works through the proxy: a `pymodbus` client script reads and writes the registers over TCP and UDP. It's a test aid only and isn't shipped.
+4. Run `fb_device_demo --transport eip` with `eip_scanner_sim`, then `--transport modbus` with `mb_master_sim` (tcp and udp). Both must PASS with the same app code.
+5. Commits, one per step, pushed to `claude/software-fieldbus-solution-yp9gxc`:
+   - 6a: `softmb` + demo + master simulator + tests
+   - 6b: the `FieldbusDevice` layer + `fb_device_demo`
+   - 6c: `SoftFieldbus.Net` + C# sample
+   - 6d: docs and HANDOFF
+
+   The C++/CLI part can't be verified here; it gets flagged in HANDOFF for the Windows session.
+
+> Status: all four steps (6a–6d) are done; the results are in `docs/phases/phase-6-modbus.md`.
