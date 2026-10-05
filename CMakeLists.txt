@@ -80,13 +80,24 @@ add_executable(mb_master_sim tools/mb_master_sim.cpp)
 target_link_libraries(mb_master_sim PRIVATE softmb)
 softeip_warnings(mb_master_sim)
 
+# ---- Transport-independent device (Hilscher-style process image) ------------
+add_library(softfieldbus STATIC src/fieldbus_device.cpp include/softfb/fieldbus_device.hpp)
+target_link_libraries(softfieldbus PUBLIC softeip softmb)
+softeip_warnings(softfieldbus)
+
+add_executable(fb_device_demo examples/fb_device_demo.cpp)
+target_link_libraries(fb_device_demo PRIVATE softfieldbus)
+softeip_warnings(fb_device_demo)
+
 # Visual Studio solution niceties
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT eip_adapter_demo)
 set_target_properties(softeip PROPERTIES FOLDER "native")
 set_target_properties(eip_adapter_demo PROPERTIES FOLDER "examples")
 set_target_properties(eip_scanner_sim PROPERTIES FOLDER "tools"
     VS_DEBUGGER_COMMAND_ARGUMENTS "--target 127.0.0.1 --rpi-ms 10 --seconds 5 --local-port 2223")
-set_target_properties(softmb PROPERTIES FOLDER "native")
+set_target_properties(softmb softfieldbus PROPERTIES FOLDER "native")
+set_target_properties(fb_device_demo PROPERTIES FOLDER "examples"
+    VS_DEBUGGER_COMMAND_ARGUMENTS "--transport modbus --unit 1")
 set_target_properties(mb_slave_demo PROPERTIES FOLDER "examples")
 set_target_properties(mb_master_sim PROPERTIES FOLDER "tools"
     VS_DEBUGGER_COMMAND_ARGUMENTS "--target 127.0.0.1 --transport tcp")

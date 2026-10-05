@@ -31,8 +31,10 @@ FC 43/14 (device identification, basic objects) is also supported.
 - [x] Interop with a third-party master (pymodbus 3.15, test aid only, not shipped)
 
 ### 6b: `FieldbusDevice` layer + `fb_device_demo`
-- [ ] `include/softfb/fieldbus_device.hpp`, `src/fieldbus_device.cpp`
-- [ ] Same echo app on EtherNet/IP and Modbus
+- [x] `include/softfb/fieldbus_device.hpp`, `src/fieldbus_device.cpp`
+  - `Transport` enum, `ioRead`/`ioWrite`, `DeviceState`
+  - maps the PC view onto the CIP assemblies (O→T 150 = input area, T→O 100 = output area)
+- [x] `examples/fb_device_demo.cpp`: the same echo app on every transport
 
 ### 6c: `SoftFieldbus.Net` (C++/CLI) + C# sample
 - [ ] Wrapper + sample (cannot be compiled here; Windows verification goes through HANDOFF)
@@ -48,6 +50,14 @@ FC 43/14 (device identification, basic objects) is also supported.
 | Polling rate, FC03 × 32 registers | ~26 000 req/s, 0.038 ms RTT | ~26 000 req/s, 0.038 ms RTT |
 | pymodbus 3.15: FC16/03, coil, float32 round trip through the app, exception 02 | PASS | PASS |
 | EtherNet/IP regression (`eip_scanner_sim`) | PASS | |
+
+## Results 6b: one application, every transport (`fb_device_demo`)
+| Transport | Test master | Result | States reported |
+|---|---|---|---|
+| EtherNet/IP | `eip_scanner_sim --in-size 64 --out-size 64` | PASS (300/300 T→O, echo) | WaitingForMaster → ConnectedIdle → ConnectedRun → WaitingForMaster → Stopped |
+| Modbus TCP | `mb_master_sim --transport tcp` | PASS (24 checks) | WaitingForMaster → ConnectedRun → Stopped |
+| Modbus UDP | `mb_master_sim --transport udp` | PASS | WaitingForMaster → ConnectedRun → Stopped |
+| Modbus TCP+UDP | both, one after the other | PASS / PASS | WaitingForMaster → ConnectedRun → Stopped |
 
 ## Later (recorded, not in this phase)
 - Single coil / single register access helpers (`ioReadBit` / `ioWriteBit`).
