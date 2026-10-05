@@ -31,8 +31,8 @@ Windows-specific parts have **never been compiled**.
 | `CMakePresets.json` / `generate_vs2026.bat` (generator `Visual Studio 18 2026`) | ✅ works; VS 2026 writes **`SoftFieldbus.slnx`** |
 | `dotnet/` C++/CLI wrapper `SoftEip.Net.dll` + C# sample `SoftEipSample` | ✅ builds (Release + Debug, 0 warnings); C# sample PASS 500/500 |
 | Real PLC test | ❌ not done |
-| **Phase 6:** `softmb` Modbus TCP/UDP slave, `softfieldbus` (`FieldbusDevice`), `mb_*` / `fb_device_demo` tools | ✅ Linux: all tests pass, pymodbus interop OK. ⚠️ never compiled with MSVC |
-| **Phase 6:** `SoftFieldbus.Net.dll` + C# `SoftFieldbusSample` | ⚠️ written, **never compiled**; follows the Windows-verified `SoftEip.Net` pattern |
+| **Phase 6:** `softmb` Modbus TCP/UDP slave, `softfieldbus` (`FieldbusDevice`), `mb_*` / `fb_device_demo` tools | ✅ Linux: all tests pass, pymodbus interop OK. ✅ Windows / VS 2026: 0 warnings, Modbus TCP/UDP + every `fb_device_demo` transport PASS (2026-10-05) |
+| **Phase 6:** `SoftFieldbus.Net.dll` + C# `SoftFieldbusSample` | ✅ Windows / VS 2026: builds with 0 warnings; `SoftFieldbusSample` PASS on eip / modbus / modbus-tcp / modbus-udp (details: `docs/phases/phase-6-modbus.md` → "Windows results") |
 
 > **Update (2026-10-05, Windows session):** steps 1–6 below are done. The results and the six fixes are in
 > `docs/phases/phase-5-dotnet-wrapper.md` → "Windows results". The most important finding is that Windows 11

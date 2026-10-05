@@ -40,7 +40,7 @@ FC 43/14 (device identification, basic objects) is also supported.
 - [x] `dotnet/SoftFieldbusNet.h/.cpp`: `SoftFieldbus.FieldbusDevice`, `FieldbusTransport` and `FieldbusState` enums, `byte[] IoRead()`, `IoRead(offset, buffer)`, `IoWrite(offset, data)` (also before `Start`), events `InputsChanged` / `StateChanged` / `Log`
 - [x] `dotnet/fieldbus_sample/`: C# sample, transport chosen on the command line
 - [x] `dotnet/CMakeLists.txt`: `/clr` settings factored into `softfb_clr_assembly()`, shared with `SoftEip.Net`
-- [ ] **Build and run on Windows / VS 2026.** This can't be done in the Linux container (no MSVC / C++/CLI); see `docs/HANDOFF.md` §6
+- [x] **Build and run on Windows / VS 2026**: whole solution 0 warnings (Release + Debug); every test below PASS (see "Windows results")
 
 ### 6d: Docs
 - [x] README: "One API for every fieldbus" and "Modbus TCP / UDP slave" sections, roadmap, repo layout
@@ -62,6 +62,48 @@ FC 43/14 (device identification, basic objects) is also supported.
 | Modbus TCP | `mb_master_sim --transport tcp` | PASS (24 checks) | WaitingForMaster → ConnectedRun → Stopped |
 | Modbus UDP | `mb_master_sim --transport udp` | PASS | WaitingForMaster → ConnectedRun → Stopped |
 | Modbus TCP+UDP | both, one after the other | PASS / PASS | WaitingForMaster → ConnectedRun → Stopped |
+
+## Windows results (2026-10-05)
+
+**Machine and tools:** Windows 11 (10.0.26200), VS 2026 Enterprise (MSVC 19.51, v145), Windows SDK 10.0.26100,
+CMake 4.4.0-rc2, .NET SDK 8.0.425. Commit under test: `3319f0e`.
+
+**Setup:** loopback 127.0.0.1. Every server was started with `--bind 127.0.0.1` (the C# sample takes the bind IP as its second
+argument), so there was no firewall prompt. Modbus used port 502, which needs no admin rights on Windows.
+
+**Build**
+
+| Target | Result |
+|---|---|
+| `generate_vs2026.bat` / `cmake --preset vs2026` | ✅ `SoftFieldbus.slnx` with 12 projects, including the new `softmb`, `softfieldbus`, `mb_slave_demo`, `mb_master_sim`, `fb_device_demo`, `SoftFieldbus.Net`, `SoftFieldbusSample` |
+| Whole solution, `msbuild -restore`, Release and Debug | ✅ 0 errors, **0 warnings** (`/W4`). No code changes were needed; `3319f0e` had already removed the one C4018 |
+| `SoftFieldbusSample` → `SoftFieldbus.Net.dll` load | ✅ `Private=true` is in the template, and `SoftFieldbus.Net` is listed in `SoftFieldbusSample.deps.json` |
+
+**Native Modbus (`mb_slave_demo` + `mb_master_sim`, port 502)**
+
+| Test | TCP | UDP |
+|---|---|---|
+| `mb_master_sim` checks (FC 01/02/03/04/05/06/15/16/22/23/43, exceptions, unit filter, echo + heartbeat) | ✅ PASS, 24/24 | ✅ PASS, 23/23 (pipelining is TCP-only) |
+| 3 requests pipelined in one TCP segment | ✅ PASS | n/a |
+| Polling rate, FC03 × 32 registers | ~22 400–23 700 req/s, 0.042–0.045 ms RTT | ~17 500–18 500 req/s, 0.054–0.057 ms RTT |
+
+**One application, every transport.** The server is `fb_device_demo` (native) and `SoftFieldbusSample` (C#); the test
+master is `eip_scanner_sim --in-size 64 --out-size 64 --local-port 2223` for EtherNet/IP and `mb_master_sim` for Modbus.
+
+| Transport | Master | `fb_device_demo` | `SoftFieldbusSample` (C#) | States reported |
+|---|---|---|---|---|
+| EtherNet/IP (`eip`) | `eip_scanner_sim`, RPI 10 ms, 5 s | ✅ PASS, 499–500/500 T→O | ✅ PASS, 494–500/500 T→O | WaitingForMaster → ConnectedIdle → ConnectedRun → WaitingForMaster |
+| Modbus TCP+UDP (`modbus`) | `mb_master_sim` tcp, then udp | ✅ PASS / PASS | ✅ PASS / PASS | WaitingForMaster → ConnectedRun → WaitingForMaster |
+| Modbus TCP (`modbus-tcp`) | tcp | ✅ PASS | ✅ PASS | same |
+| Modbus UDP (`modbus-udp`) | udp | ✅ PASS | ✅ PASS | same |
+| Negative: `modbus-tcp` + UDP master | udp | ✅ no UDP listener (master reports 22 failures, as expected) | ✅ same | — |
+| Negative: `modbus-udp` + TCP master | tcp | ✅ "cannot open TCP connection" (no TCP listener, as expected) | ✅ same | — |
+
+The last state is `WaitingForMaster` because the test processes were ended with `taskkill /F`; a clean Ctrl+C
+also reports `Stopped`, as in the Linux runs.
+
+**Linux re-check (WSL Ubuntu 24.04, g++, port 1502):** 0 warnings. `mb_master_sim` tcp/udp PASS, `fb_device_demo`
+modbus tcp/udp PASS, `fb_device_demo` eip PASS (498/500).
 
 ## Later (recorded, not in this phase)
 - Single coil / single register access helpers (`ioReadBit` / `ioWriteBit`).
