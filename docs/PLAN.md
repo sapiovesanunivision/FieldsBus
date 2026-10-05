@@ -89,6 +89,8 @@ Outcome of this step: a working EtherNet/IP adapter library plus a demo, and a s
 
 ## Phase 6 plan: Modbus slave (TCP + UDP) and Hilscher-style FieldbusDevice API
 
+> **Update (2026-10-05, phase 7):** renamed for role-explicit Modbus terms: `ModbusSlave` → `ModbusServer`, `mb_slave_demo` → `mb_server_demo`, `mb_master_sim` → `mb_client_test` (now built on `softmb::ModbusClient`). This document keeps the names used at the time. See README "Roles" and `docs/phases/phase-7-modbus-client.md`.
+
 ### Context
 Besides EtherNet/IP, the team needs a software **Modbus slave (server)** on Windows. A PLC or SCADA master polls it over **Modbus TCP and Modbus UDP**.
 - **RTU (serial)** is deferred, because modern PCs no longer have COM ports. The design keeps the PDU layer independent of the transport, so RTU or RTU-over-TCP can be added later.
@@ -202,3 +204,30 @@ Both protocols share the same process-image API, so the layer is small and can b
    The C++/CLI part can't be verified here; it gets flagged in HANDOFF for the Windows session.
 
 > Status: all four steps (6a–6d) are done; the results are in `docs/phases/phase-6-modbus.md`.
+
+## Phase 7 plan: Modbus TCP/UDP client (the PC polls a PLC) + role-explicit names
+
+**Why:** the PC also has to act as the Modbus **client** (formerly "master") for a PLC or device that is the Modbus
+**server**, which is what Dev.3 `UvcIOModBus` (libmodbus) does today. Testing next to EasyModbus Server Simulator showed
+that "master/slave" wording was confusing, because both FieldsBus and EasyModbus were *servers*.
+
+**Decisions:**
+- **Implementation:** own code, no libmodbus/LGPL dependency.
+- **v1 transports:** TCP + UDP.
+- **API:** a request API plus a cyclic poller.
+- **Test:** `mb_master_sim` is ported onto the client and becomes `mb_client_test`.
+- **Names:** Modbus specification terms on both sides: `ModbusServer`, `ModbusClient`, `ModbusClientPoller`, with
+  deprecated aliases for one release.
+
+**Steps:**
+- **7a:** rename + shared pieces (`modbus_defs.hpp`, `periodic_timer.hpp`, socket helpers).
+- **7b:** `ModbusClient` + `mb_client_test`.
+- **7c:** `ModbusClientPoller`.
+- **7d:** `mb_client` CLI + docs.
+
+Details and results: `docs/phases/phase-7-modbus-client.md`.
+
+**Later:**
+- the client as a `FieldbusDevice` transport and in `SoftFieldbus.Net`;
+- RTU for both roles;
+- a Dev.3 `IODevice` adapter DLL, so ProInspect can replace `UvcIOModBus`.

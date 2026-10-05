@@ -83,6 +83,10 @@ add_executable(mb_client_test tools/mb_client_test.cpp)
 target_link_libraries(mb_client_test PRIVATE softmb)
 softeip_warnings(mb_client_test)
 
+add_executable(mb_client tools/mb_client.cpp)
+target_link_libraries(mb_client PRIVATE softmb)
+softeip_warnings(mb_client)
+
 # ---- Transport-independent device (Hilscher-style process image) ------------
 add_library(softfieldbus STATIC src/fieldbus_device.cpp include/softfb/fieldbus_device.hpp)
 target_link_libraries(softfieldbus PUBLIC softeip softmb)
@@ -102,6 +106,8 @@ set_target_properties(softmb softfieldbus PROPERTIES FOLDER "native")
 set_target_properties(fb_device_demo PROPERTIES FOLDER "examples"
     VS_DEBUGGER_COMMAND_ARGUMENTS "--transport modbus --unit 1")
 set_target_properties(mb_server_demo PROPERTIES FOLDER "examples")
+set_target_properties(mb_client PROPERTIES FOLDER "tools"
+    VS_DEBUGGER_COMMAND_ARGUMENTS "--host 127.0.0.1 read-holding 0 10")
 set_target_properties(mb_client_test PROPERTIES FOLDER "tools"
     VS_DEBUGGER_COMMAND_ARGUMENTS "--target 127.0.0.1 --transport tcp")
 

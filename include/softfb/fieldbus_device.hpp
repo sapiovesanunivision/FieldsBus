@@ -40,7 +40,7 @@ enum class Transport {
 
 enum class DeviceState {
     Stopped,
-    WaitingForMaster, // started, no PLC/master talking to us
+    WaitingForMaster, // started, no PLC talking to us yet (EtherNet/IP scanner / Modbus client); name kept for API compatibility
     ConnectedIdle,    // EtherNet/IP: connection open, PLC in program/idle mode
     ConnectedRun,     // data exchange active (Modbus has no idle state)
 };

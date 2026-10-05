@@ -1,5 +1,7 @@
 # Phase 6: Modbus slave (TCP + UDP) and transport-selection layer
 
+> **Update (2026-10-05, phase 7):** renamed for role-explicit Modbus terms: `ModbusSlave` → `ModbusServer`, `mb_slave_demo` → `mb_server_demo`, `mb_master_sim` → `mb_client_test` (now built on `softmb::ModbusClient`). This document keeps the names used at the time. See README "Roles" and `docs/phases/phase-7-modbus-client.md`.
+
 **Goal:** a software Modbus slave next to the EtherNet/IP adapter. Every transport exposes the same
 **Hilscher-style process image (PC view)**:
 - **input area** = PLC → PC, read by the app with `ioRead`

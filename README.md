@@ -1,18 +1,21 @@
 # FieldsBus: software fieldbus device for Windows (C++)
 
-Software-only fieldbus **devices** ("slaves") for a standard Windows PC NIC, all behind one
+Software-only fieldbus endpoints for a standard Windows PC NIC, all behind one
 **Hilscher-style process-image API** (see [One API for every fieldbus](#one-api-for-every-fieldbus)):
-- **EtherNet/IP adapter** (`softeip`)
-- **Modbus TCP / Modbus UDP slave** (`softmb`)
+- **EtherNet/IP adapter** (`softeip`): the PLC (scanner) polls the PC
+- **Modbus TCP / Modbus UDP server** (`softmb::ModbusServer`): the PLC (Modbus client) polls the PC
+- **Modbus TCP / Modbus UDP client** (`softmb::ModbusClient`, `softmb::ModbusClientPoller`): the PC polls a PLC
+  or device that is a Modbus server
 
-The EtherNet/IP adapter is described first; the Modbus slave and the common API follow.
+Who polls whom is spelled out in [Roles](#roles-who-polls-whom). The EtherNet/IP adapter is described first; the Modbus
+server and client and the common API follow.
 
-A software-only **EtherNet/IP adapter** (I/O device / "slave") that runs on a standard Windows PC NIC.
+A software-only **EtherNet/IP adapter** (the I/O device) that runs on a standard Windows PC NIC.
 It replaces a Hilscher netX/cifX card where cycle times of roughly 10 ms or more are good enough.
-The PLC stays the master (scanner): it opens the connection and exchanges cyclic I/O with the PC.
+The PLC is the **scanner**: it opens the connection and exchanges cyclic I/O with the PC (see [Roles](#roles-who-polls-whom)).
 
 ```
- PLC (scanner / master)                         Windows PC (this library)
+ PLC (scanner)                                  Windows PC (this library, adapter)
  ───────────────────────                        ────────────────────────────────
  TCP 44818  RegisterSession, Forward_Open  ───► encapsulation + CIP objects
  UDP 2222   O->T outputs every RPI         ───► Adapter::outputData()
@@ -202,7 +205,7 @@ softfb::DeviceConfig cfg;
 cfg.transport = softfb::Transport::ModbusTcp;   // EtherNetIP, ModbusTcp, ModbusUdp, ModbusTcpUdp
 cfg.inputSize = 64;                             // bytes PLC -> PC
 cfg.outputSize = 64;                            // bytes PC -> PLC
-cfg.onStateChanged = [](softfb::DeviceState s) { /* WaitingForMaster, ConnectedRun, ... */ };
+cfg.onStateChanged = [](softfb::DeviceState s) { /* WaitingForMaster (= waiting for the scanner / Modbus client), ConnectedRun, ... */ };
 
 softfb::FieldbusDevice dev(cfg);
 dev.start();
@@ -232,11 +235,29 @@ application on every transport.
 2k high, 2k+1 low). EtherNet/IP data is copied as is. Agree on the byte order of multi-byte values with the PLC
 programmer. For example, a float written by a Siemens PLC over Modbus arrives big-endian.
 
-## Modbus TCP / UDP slave
+## Roles: who polls whom
 
-`softmb::ModbusSlave` is a Modbus server on **TCP and/or UDP port 502**, with MBAP framing on both.
+Modbus calls the side that holds the registers the **server** (formerly "slave") and the side that sends the requests
+the **client** (formerly "master"). FieldsBus uses these names in code and docs:
 
-| Modbus table | Function codes | Area | Master access |
+| The PC is the… | Old term | The PLC is the… | Who holds the registers | Class | Tools |
+|---|---|---|---|---|---|
+| **Modbus server** | slave | client: it polls the PC | the PC | `softmb::ModbusServer` | `mb_server_demo` |
+| **Modbus client** | master | server: the PC polls it | the PLC / device | `softmb::ModbusClient` (requests), `softmb::ModbusClientPoller` (cyclic image) | `mb_client` (manual), `mb_client_test` (automated test against `mb_server_demo`) |
+| EtherNet/IP **adapter** | slave | scanner: it polls the PC | the PC | `softeip::Adapter` | `eip_adapter_demo`, `eip_scanner_sim` |
+
+Two **servers** on the same machine and port compete for it, for example `mb_server_demo` and EasyModbus Server
+Simulator. To talk *to* a server such as EasyModbus, use the client (`mb_client`, `ModbusClient`).
+
+> **Renamed in phase 7:** `ModbusSlave` → `ModbusServer` (`ModbusSlaveConfig` → `ModbusServerConfig`,
+> `masterConnected()` → `clientConnected()`, `masterTimeoutMs` → `clientTimeoutMs`), `mb_slave_demo` → `mb_server_demo`,
+> `mb_master_sim` → `mb_client_test`. `softmb/modbus_slave.hpp` still compiles, with deprecated aliases, for one release.
+
+## Modbus TCP / UDP server (the PLC polls the PC)
+
+`softmb::ModbusServer` is a Modbus server on **TCP and/or UDP port 502**, with MBAP framing on both.
+
+| Modbus table | Function codes | Area | Client (PLC) access |
 |---|---|---|---|
 | Holding registers 0 … inputSize/2-1 | 03, 06, 16, 22, 23 | input area (PLC → PC) | read and write |
 | Coils 0 … inputSize·8-1 (bit i = byte i/8, bit i%8) | 01, 05, 15 | input area, bit view | read and write |
@@ -246,20 +267,80 @@ programmer. For example, a float written by a Siemens PLC over Modbus arrives bi
 
 - FC 43/14 (device identification) returns VendorName, ProductCode and Revision.
 - Exceptions follow the spec: 01 illegal function, 02 illegal address, 03 illegal value.
-- **Unit id:** `unitId = 0` answers every unit id. Any other value answers only that id, plus 0xFF and 0 (the values masters use to address a TCP device directly). Other ids get no reply.
-- **Addressing:** many masters and HMIs number from 1 ("40001" = holding register **0**, "30001" = input register 0).
-- **Masters that only use FC03/FC16** (some PLC function blocks): set `outputsInHoldingAt`, for example to 1000, to make the output area readable as holding registers.
+- **Unit id:** `unitId = 0` answers every unit id. Any other value answers only that id, plus 0xFF and 0 (the values clients use to address a TCP device directly). Other ids get no reply.
+- **Addressing:** many clients (PLCs, HMIs) number from 1 ("40001" = holding register **0**, "30001" = input register 0).
+- **Clients that only use FC03/FC16** (some PLC function blocks): set `outputsInHoldingAt`, for example to 1000, to make the output area readable as holding registers.
 - **Firewall:** allow inbound **TCP 502 and UDP 502**. Windows needs no admin rights for port 502 (Linux does; the tests use 1502).
 - **RTU over serial** is not implemented (no COM ports on modern PCs). The PDU engine (`processPdu`) is transport independent, so RTU over a USB-RS485 adapter or RTU-over-TCP can be added.
 
 **Testing without a PLC:**
 ```sh
-mb_slave_demo --port 1502            # unit 1, 64 B input / 64 B output, echo + heartbeat
-mb_master_sim --port 1502 --transport tcp    # or udp: 24 checks, RESULT: PASS
+mb_server_demo --port 1502                      # unit 1, 64 B input / 64 B output, echo + heartbeat
+mb_client_test --port 1502 --transport tcp      # or udp: RESULT: PASS
 ```
-`mb_master_sim` covers every function code, the exception cases, the unit filter, TCP pipelining and the polling
-rate (about 26 000 requests/s on loopback). Interop with [pymodbus](https://github.com/pymodbus-dev/pymodbus) 3.15 was
+`mb_client_test` drives the server through `softmb::ModbusClient`. It covers every function code, the exception
+cases, the unit filter, TCP pipelining, the cyclic poller and the polling rate (about 17 000 requests/s on loopback). Interop with [pymodbus](https://github.com/pymodbus-dev/pymodbus) 3.15 was
 also checked; results are in `docs/phases/phase-6-modbus.md`.
+
+## Modbus TCP / UDP client (the PC polls a PLC)
+
+The opposite role, which Dev.3's `UvcIOModBus` (libmodbus) covers today: the PLC, a Wago coupler or a gateway is the
+Modbus **server**, and the PC sends the requests.
+
+**Requests:** `softmb::ModbusClient`, synchronous and thread-safe.
+```cpp
+#include "softmb/modbus_client.hpp"
+
+softmb::ModbusClientConfig cfg;
+cfg.host = "192.168.0.10";                       // the PLC (Modbus server)
+cfg.transport = softmb::ClientTransport::Tcp;    // or Udp
+cfg.unitId = 1;
+softmb::ModbusClient plc(cfg);
+
+std::vector<uint16_t> regs;
+softmb::Result r = plc.readHoldingRegisters(0, 10, regs);   // FC03, addresses are 0-based
+if (!r.ok())
+    printf("%s\n", r.text().c_str());                     // "exception 02 (illegal data address)", "timeout", ...
+plc.writeMultipleRegisters(100, {1, 2, 3});              // FC16
+```
+- Function codes FC01/02/03/04/05/06/15/16/22/23, plus `transact()` for any raw PDU.
+- No C++ exceptions: every call returns a `Result` (`Ok`, `Exception` + code, `Timeout`, `NotConnected`,
+  `ProtocolError`, `InvalidArgument`).
+- Quantities above the protocol limits are rejected locally.
+- **TCP:** connects with a timeout, reconnects after errors (`reconnectDelayMs`), and skips stale replies by transaction id.
+- **UDP:** matches replies by source address and transaction id, and resends on timeout (`retries`).
+
+**Cyclic process image:** `softmb::ModbusClientPoller`, the way `UvcIOModBus` apps poll, without its 32-bit limit.
+```cpp
+#include "softmb/modbus_client_poller.hpp"
+
+softmb::ModbusClientPollerConfig pc;
+pc.client = cfg;
+pc.cycleMs = 20;
+pc.inputSize = 32;  pc.outputSize = 32;
+pc.reads  = {{softmb::Table::HoldingRegisters, 0, 16, 0}};    // PLC registers 0..15 -> input image bytes 0..31
+pc.writes = {{softmb::Table::HoldingRegisters, 100, 16, 0}};  // output image bytes 0..31 -> PLC registers 100..115
+softmb::ModbusClientPoller poller(pc);
+poller.start();
+poller.ioWrite(0, out, 32);   // PC -> PLC, written on change (or every cycle)
+poller.ioRead(0, in, 32);     // PLC -> PC, refreshed every cycle
+```
+- **Image layout:** the same as the server's PC view. Registers are 2 bytes big-endian; bits are LSB-first.
+- **Splitting:** areas above the protocol limits are split into several requests.
+- **Reads** are published atomically. After a communication error, `online()` goes false and the last values are kept;
+  the outputs are written again once the server answers.
+- **Timing:** `stats()` reports cycles, failures and the maximum cycle and period, for jitter.
+
+**Manual client:** `mb_client`, for any server.
+```sh
+mb_client --host 192.168.0.10 [--port 502] [--transport tcp|udp] [--unit 1] read-holding 0 10
+mb_client ... read-input 0 10 | read-coils 0 16 | read-discrete 0 16
+mb_client ... write-register 5 1234 | write-registers 0 1 2 3 | write-coil 3 1 | write-coils 0 1 0 1
+mb_client ... poll --read holding:0:8 --write holding:100:8 --cycle-ms 100 --seconds 10
+```
+`poll` writes a counter, incremented once per second, into every write area, and prints changes of the read areas.
+Addresses are 0-based protocol addresses. **EasyModbus Server Simulator's UI shows address + 1**, so holding register 0
+appears as row 1. Results against EasyModbus are in `docs/phases/phase-7-modbus-client.md`.
 
 ## Connecting a real PLC
 
@@ -281,14 +362,14 @@ also checked; results are in `docs/phases/phase-6-modbus.md`.
 Most of these need an **EDS file** to import the device. That is the next roadmap item. Until then, use a "generic
 EtherNet/IP device" entry if the tool has one, with the same instances, sizes and a unicast connection.
 
-### Modbus master (any PLC, SCADA or HMI)
-1. Add a Modbus TCP (or Modbus UDP) server/slave device: the PC's IP, port **502**, unit id as configured
-   (`mb_slave_demo` uses **1**; `unitId = 0` answers any id).
+### Modbus client (any PLC, SCADA or HMI polls the PC)
+1. In the PLC, add a Modbus TCP (or Modbus UDP) server device: the PC's IP, port **502**, unit id as configured
+   (`mb_server_demo` uses **1**; `unitId = 0` answers any id).
 2. **Write the PC's inputs** (PLC → PC) with FC16 (Write Multiple Registers) to holding registers from **0**. Coils FC05/FC15 address the same bytes as bits.
 3. **Read the PC's outputs** (PC → PLC) with FC04 (Read Input Registers) from **0**, or with FC02 as bits.
-   If the master can only read holding registers, set `outputsInHoldingAt` (for example 1000) and read with FC03 from there.
+   If the PLC can only read holding registers, set `outputsInHoldingAt` (for example 1000) and read with FC03 from there.
 4. Many tools number registers from 1: holding register 0 is "40001", input register 0 is "30001".
-5. With the demo running, the master reads back what it wrote (from byte 4 on), and input registers 0..1 count up as a heartbeat.
+5. With the demo running, the PLC reads back what it wrote (from byte 4 on), and input registers 0..1 count up as a heartbeat.
 
 ### Windows checklist
 - Firewall: allow inbound traffic for the executable:
@@ -301,8 +382,11 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
 - Use a dedicated NIC for the machine network. Disable its power saving and interrupt moderation.
 - Keep the PC's IP static.
 - The EtherNet/IP vendor ID default is `0xFFFF` (a placeholder). Use your company's ODVA vendor ID for any product.
-- Only one program can own a port: stop RSLinx / Hilscher drivers (44818) or other Modbus servers (502) on the same NIC,
-  or bind to a specific IP with `bindAddress`.
+- Only one program can own a port: stop RSLinx / Hilscher drivers (44818) or other Modbus servers (502), or use
+  another port.
+  - TCP: binding to a specific IP with `bindAddress` separates two servers.
+  - **UDP: it does not.** With `SO_REUSEADDR`, Windows lets two UDP servers share port 502 and delivers each datagram
+    to either of them. Measured: requests meant for `mb_server_demo` reached EasyModbus Server Simulator.
 
 ## Roadmap
 
@@ -312,8 +396,10 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
 4. **Class-3 explicit messaging** (MSG instructions to read/write assemblies or parameters).
 5. **Single bit and named variable access** on top of `ioRead`/`ioWrite`: `ioReadBit`/`ioWriteBit`, plus a
    variable map (name, type, offset, bit, byte order) shared with the PLC project, with typed get/set by name.
-6. **Modbus RTU** over USB-RS485 adapters / RTU-over-TCP (reuses the Modbus PDU engine).
-7. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
+6. **Modbus RTU** over USB-RS485 adapters / RTU-over-TCP, for the server (reuses the PDU engine) and the client.
+7. **Modbus client in `FieldbusDevice` and .NET:** `ModbusClientPoller` as a transport of the common API, plus
+   `SoftFieldbus.Net`. Also a Dev.3 `IODevice` adapter DLL, so ProInspect can replace `UvcIOModBus`.
+8. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
    This is a large effort, about 5–10× the work of EtherNet/IP. An alternative is porting p-net (GPL or commercial license) to Npcap.
 
 **Build vs. reuse:** [OpENer](https://github.com/EIPStackGroup/OpENer) is a mature open-source EtherNet/IP adapter in C
@@ -325,10 +411,10 @@ If you plan formal ODVA conformance, compare effort against OpENer or a commerci
 ```
 include/softfb/    FieldbusDevice: one Hilscher-style API for every transport
 include/softeip/   EtherNet/IP adapter API + shared socket/byte helpers
-include/softmb/    Modbus TCP/UDP slave API
+include/softmb/    Modbus TCP/UDP server (ModbusServer) and client (ModbusClient, ModbusClientPoller) APIs
 src/               implementations
 dotnet/            C++/CLI wrappers (SoftFieldbus.Net.dll, SoftEip.Net.dll) + C# samples
-examples/          demo devices (fb_device_demo, eip_adapter_demo, mb_slave_demo)
-tools/             PLC/master simulators (eip_scanner_sim, mb_master_sim)
+examples/          demo devices (fb_device_demo, eip_adapter_demo, mb_server_demo)
+tools/             test peers and clients (eip_scanner_sim, mb_client_test, mb_client)
 docs/              plan, phase documents, HANDOFF.md (Windows build/verify steps)
 ```
