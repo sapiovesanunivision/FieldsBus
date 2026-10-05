@@ -1,11 +1,11 @@
-// Demo Modbus slave (TCP + UDP).
-//   input area  (PLC -> PC, holding registers / coils)        printed whenever the master changes it
+// Demo Modbus SERVER (formerly "slave"), TCP + UDP: the PC holds the registers, the PLC (Modbus client) polls them.
+//   input area  (PLC -> PC, holding registers / coils)        printed whenever the client changes it
 //   output area (PC -> PLC, input registers / discrete inputs) = echo of the input area,
 //                                                                bytes 0..3 replaced by a heartbeat counter
 //
-// Usage: mb_slave_demo [--bind IP] [--port N] [--unit N] [--in-size N] [--out-size N]
+// Usage: mb_server_demo [--bind IP] [--port N] [--unit N] [--in-size N] [--out-size N]
 //                      [--no-tcp 1] [--no-udp 1] [--outputs-in-holding-at N]
-#include "softmb/modbus_slave.hpp"
+#include "softmb/modbus_server.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -45,7 +45,7 @@ void logLine(const std::string& msg)
 
 int main(int argc, char** argv)
 {
-    softmb::ModbusSlaveConfig cfg;
+    softmb::ModbusServerConfig cfg;
     cfg.unitId = 1;
     for (int i = 1; i + 1 < argc; i += 2) {
         std::string k = argv[i];
@@ -86,9 +86,9 @@ int main(int argc, char** argv)
         logLine(line);
     };
 
-    softmb::ModbusSlave slave(cfg);
+    softmb::ModbusServer server(cfg);
     std::string error;
-    if (!slave.start(&error)) {
+    if (!server.start(&error)) {
         std::fprintf(stderr, "start failed: %s\n", error.c_str());
         return 1;
     }
@@ -101,16 +101,16 @@ int main(int argc, char** argv)
     std::vector<uint8_t> in(cfg.inputSize), out(cfg.outputSize, 0);
     uint32_t heartbeat = 0;
     while (!g_quit) {
-        slave.ioRead(0, in.data(), in.size());
+        server.ioRead(0, in.data(), in.size());
         std::copy_n(in.begin(), std::min(in.size(), out.size()), out.begin());
         ++heartbeat;
         for (size_t i = 0; i < 4 && i < out.size(); ++i)
             out[i] = uint8_t(heartbeat >> (8 * i));
-        slave.ioWrite(0, out.data(), out.size());
+        server.ioWrite(0, out.data(), out.size());
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    slave.stop();
+    server.stop();
     logLine("stopped");
     return 0;
 }

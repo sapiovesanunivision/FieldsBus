@@ -1,7 +1,7 @@
 // FieldbusDevice: maps the PC-view process image onto softeip / softmb.
 #include "softfb/fieldbus_device.hpp"
 
-#include "softmb/modbus_slave.hpp"
+#include "softmb/modbus_server.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -35,13 +35,13 @@ struct FieldbusDevice::Impl {
             return eip->plcInRun() ? DeviceState::ConnectedRun : DeviceState::ConnectedIdle;
         }
         if (mb)
-            return mb->masterConnected() ? DeviceState::ConnectedRun : DeviceState::WaitingForMaster;
+            return mb->clientConnected() ? DeviceState::ConnectedRun : DeviceState::WaitingForMaster;
         return DeviceState::Stopped;
     }
 
     DeviceConfig cfg;
     std::unique_ptr<softeip::Adapter> eip;
-    std::unique_ptr<softmb::ModbusSlave> mb;
+    std::unique_ptr<softmb::ModbusServer> mb;
     std::atomic<bool> started{false};
     std::atomic<DeviceState> lastState{DeviceState::Stopped};
 
@@ -93,7 +93,7 @@ bool FieldbusDevice::start(std::string* error)
             return false;
         }
     } else {
-        softmb::ModbusSlaveConfig m;
+        softmb::ModbusServerConfig m;
         m.bindAddress = c.bindAddress;
         m.port = c.modbus.port;
         m.enableTcp = c.transport != Transport::ModbusUdp;
@@ -109,7 +109,7 @@ bool FieldbusDevice::start(std::string* error)
         m.onLog = c.onLog;
         m.onInputsChanged = c.onInputsChanged;
         m.onConnectionChanged = [&d](bool) { d.refreshState(); };
-        d.mb = std::make_unique<softmb::ModbusSlave>(m);
+        d.mb = std::make_unique<softmb::ModbusServer>(m);
         {
             std::lock_guard<std::mutex> lock(d.shadowMutex);
             d.mb->ioWrite(0, d.outputShadow.data(), d.outputShadow.size());

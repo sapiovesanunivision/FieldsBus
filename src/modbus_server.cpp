@@ -1,5 +1,7 @@
-// Software Modbus slave: PDU engine + Modbus TCP / Modbus UDP transports.
-#include "softmb/modbus_slave.hpp"
+// Modbus SERVER (formerly "slave"): PDU engine + Modbus TCP / Modbus UDP transports.
+// The PC holds the registers; the PLC is the Modbus client and polls them.
+#include "softmb/modbus_server.hpp"
+#include "softmb/modbus_defs.hpp"
 
 #include "softeip/bytes.hpp"
 #include "softeip/socket_compat.hpp"
@@ -22,31 +24,6 @@ using softeip::socket_t;
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-constexpr size_t kMbapSize = 7;        // transaction, protocol, length, unit
-constexpr size_t kMaxPdu = 253;
-constexpr size_t kMaxAdu = kMbapSize + kMaxPdu;
-
-namespace fc {
-constexpr uint8_t kReadCoils = 0x01;
-constexpr uint8_t kReadDiscreteInputs = 0x02;
-constexpr uint8_t kReadHoldingRegisters = 0x03;
-constexpr uint8_t kReadInputRegisters = 0x04;
-constexpr uint8_t kWriteSingleCoil = 0x05;
-constexpr uint8_t kWriteSingleRegister = 0x06;
-constexpr uint8_t kWriteMultipleCoils = 0x0F;
-constexpr uint8_t kWriteMultipleRegisters = 0x10;
-constexpr uint8_t kMaskWriteRegister = 0x16;
-constexpr uint8_t kReadWriteMultipleRegisters = 0x17;
-constexpr uint8_t kEncapsulatedInterface = 0x2B;
-constexpr uint8_t kMeiReadDeviceId = 0x0E;
-} // namespace fc
-
-namespace ex {
-constexpr uint8_t kIllegalFunction = 0x01;
-constexpr uint8_t kIllegalDataAddress = 0x02;
-constexpr uint8_t kIllegalDataValue = 0x03;
-} // namespace ex
 
 std::vector<uint8_t> exception(uint8_t function, uint8_t code)
 {
@@ -75,8 +52,8 @@ struct RegRef {
 
 } // namespace
 
-struct ModbusSlave::Impl {
-    explicit Impl(ModbusSlaveConfig c)
+struct ModbusServer::Impl {
+    explicit Impl(ModbusServerConfig c)
         : cfg(std::move(c)),
           input((cfg.inputSize + 1) & ~size_t(1), 0),   // rounded up to whole registers
           output((cfg.outputSize + 1) & ~size_t(1), 0)
@@ -94,7 +71,7 @@ struct ModbusSlave::Impl {
     // Parses one complete MBAP frame; returns the response ADU (empty = no reply).
     std::vector<uint8_t> handleAdu(const uint8_t* adu, size_t n);
     bool unitAccepted(uint8_t unit) const;
-    void updateMasterState(Clock::time_point now);
+    void updateClientState(Clock::time_point now);
 
     std::vector<uint8_t> processPdu(const uint8_t* pdu, size_t len);
     std::vector<uint8_t> execute(uint8_t function, ByteReader& r, bool& inputsChanged);
@@ -104,14 +81,8 @@ struct ModbusSlave::Impl {
     size_t inputRegisters() const { return input.size() / 2; }
     size_t outputRegisters() const { return output.size() / 2; }
     bool holdingRef(size_t reg, bool forWrite, RegRef& ref);
-    static bool getBit(const std::vector<uint8_t>& a, size_t bit) { return (a[bit / 8] >> (bit % 8)) & 1; }
-    static void setBit(std::vector<uint8_t>& a, size_t bit, bool v)
-    {
-        if (v)
-            a[bit / 8] = uint8_t(a[bit / 8] | (1u << (bit % 8)));
-        else
-            a[bit / 8] = uint8_t(a[bit / 8] & ~(1u << (bit % 8)));
-    }
+    static bool getBit(const std::vector<uint8_t>& a, size_t bit) { return softmb::getBit(a.data(), bit); }
+    static void setBit(std::vector<uint8_t>& a, size_t bit, bool v) { softmb::setBit(a.data(), bit, v); }
 
     void log(const std::string& msg) const
     {
@@ -119,7 +90,7 @@ struct ModbusSlave::Impl {
             cfg.onLog(msg);
     }
 
-    ModbusSlaveConfig cfg;
+    ModbusServerConfig cfg;
     softeip::SocketLibrary socketLib;
 
     std::thread thread;
@@ -134,14 +105,14 @@ struct ModbusSlave::Impl {
     mutable std::mutex dataMutex;
     std::vector<uint8_t> input;  // PLC -> PC, guarded by dataMutex
     std::vector<uint8_t> output; // PC -> PLC, guarded by dataMutex
-    std::atomic<bool> masterUp{false};
+    std::atomic<bool> clientUp{false};
 };
 
 // ===========================================================================
 // Lifecycle
 // ===========================================================================
 
-bool ModbusSlave::Impl::start(std::string* error)
+bool ModbusServer::Impl::start(std::string* error)
 {
     auto fail = [&](const std::string& what) {
         if (error)
@@ -181,13 +152,13 @@ bool ModbusSlave::Impl::start(std::string* error)
 
     running = true;
     thread = std::thread([this] { run(); });
-    log("Modbus slave started on " + cfg.bindAddress + ":" + portText + " (" +
+    log("Modbus server started on " + cfg.bindAddress + ":" + portText + " (" +
         (cfg.enableTcp ? "TCP" : "") + (cfg.enableTcp && cfg.enableUdp ? "+" : "") + (cfg.enableUdp ? "UDP" : "") +
         "), input " + std::to_string(cfg.inputSize) + " B / output " + std::to_string(cfg.outputSize) + " B");
     return true;
 }
 
-void ModbusSlave::Impl::stop()
+void ModbusServer::Impl::stop()
 {
     running = false;
     if (thread.joinable())
@@ -201,11 +172,11 @@ void ModbusSlave::Impl::stop()
             *s = kInvalidSocket;
         }
     }
-    masterUp = false;
+    clientUp = false;
     haveRequest = false;
 }
 
-void ModbusSlave::Impl::run()
+void ModbusServer::Impl::run()
 {
 #ifdef _WIN32
     if (cfg.raiseThreadPriority)
@@ -262,18 +233,18 @@ void ModbusSlave::Impl::run()
                 }
             }
         }
-        updateMasterState(Clock::now());
+        updateClientState(Clock::now());
     }
 }
 
-void ModbusSlave::Impl::updateMasterState(Clock::time_point now)
+void ModbusServer::Impl::updateClientState(Clock::time_point now)
 {
     bool up = !clients.empty() ||
-              (haveRequest && now - lastRequest < std::chrono::milliseconds(cfg.masterTimeoutMs));
-    if (up == masterUp)
+              (haveRequest && now - lastRequest < std::chrono::milliseconds(cfg.clientTimeoutMs));
+    if (up == clientUp)
         return;
-    masterUp = up;
-    log(up ? "master connected" : "master disconnected");
+    clientUp = up;
+    log(up ? "client connected" : "client disconnected");
     if (cfg.onConnectionChanged)
         cfg.onConnectionChanged(up);
 }
@@ -282,12 +253,12 @@ void ModbusSlave::Impl::updateMasterState(Clock::time_point now)
 // Transports
 // ===========================================================================
 
-bool ModbusSlave::Impl::unitAccepted(uint8_t unit) const
+bool ModbusServer::Impl::unitAccepted(uint8_t unit) const
 {
     return cfg.unitId == 0 || unit == cfg.unitId || unit == 0xFF || unit == 0;
 }
 
-std::vector<uint8_t> ModbusSlave::Impl::handleAdu(const uint8_t* adu, size_t n)
+std::vector<uint8_t> ModbusServer::Impl::handleAdu(const uint8_t* adu, size_t n)
 {
     ByteReader r(adu, n);
     uint16_t transaction = r.u16be();
@@ -310,7 +281,7 @@ std::vector<uint8_t> ModbusSlave::Impl::handleAdu(const uint8_t* adu, size_t n)
     return std::move(w.data());
 }
 
-void ModbusSlave::Impl::acceptClient()
+void ModbusServer::Impl::acceptClient()
 {
     sockaddr_in peer{};
     socklen_t len = sizeof peer;
@@ -331,7 +302,7 @@ void ModbusSlave::Impl::acceptClient()
     clients.push_back(std::move(c));
 }
 
-void ModbusSlave::Impl::handleTcpReadable(TcpClient& c, bool& closeClient)
+void ModbusServer::Impl::handleTcpReadable(TcpClient& c, bool& closeClient)
 {
     uint8_t buf[2048];
     int n = softeip::recvBytes(c.sock, buf, sizeof buf);
@@ -363,7 +334,7 @@ void ModbusSlave::Impl::handleTcpReadable(TcpClient& c, bool& closeClient)
     }
 }
 
-void ModbusSlave::Impl::handleUdp()
+void ModbusServer::Impl::handleUdp()
 {
     uint8_t buf[kMaxAdu + 16];
     sockaddr_in peer{};
@@ -382,7 +353,7 @@ void ModbusSlave::Impl::handleUdp()
 // PDU engine
 // ===========================================================================
 
-std::vector<uint8_t> ModbusSlave::Impl::processPdu(const uint8_t* pdu, size_t len)
+std::vector<uint8_t> ModbusServer::Impl::processPdu(const uint8_t* pdu, size_t len)
 {
     if (len == 0)
         return {};
@@ -407,7 +378,7 @@ std::vector<uint8_t> ModbusSlave::Impl::processPdu(const uint8_t* pdu, size_t le
     return resp;
 }
 
-bool ModbusSlave::Impl::holdingRef(size_t reg, bool forWrite, RegRef& ref)
+bool ModbusServer::Impl::holdingRef(size_t reg, bool forWrite, RegRef& ref)
 {
     if (reg < inputRegisters()) {
         ref = {&input, reg * 2};
@@ -423,7 +394,7 @@ bool ModbusSlave::Impl::holdingRef(size_t reg, bool forWrite, RegRef& ref)
     return false;
 }
 
-std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r, bool& inputsChanged)
+std::vector<uint8_t> ModbusServer::Impl::execute(uint8_t function, ByteReader& r, bool& inputsChanged)
 {
     ByteWriter w;
     w.u8(function);
@@ -434,7 +405,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
         const auto& area = function == fc::kReadCoils ? input : output;
         size_t start = r.u16be();
         size_t qty = r.u16be();
-        if (qty < 1 || qty > 2000)
+        if (qty < 1 || qty > limits::kReadBits)
             return exception(function, ex::kIllegalDataValue);
         if (start + qty > area.size() * 8)
             return exception(function, ex::kIllegalDataAddress);
@@ -452,7 +423,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
     case fc::kReadInputRegisters: {
         size_t start = r.u16be();
         size_t qty = r.u16be();
-        if (qty < 1 || qty > 125)
+        if (qty < 1 || qty > limits::kReadRegisters)
             return exception(function, ex::kIllegalDataValue);
         w.u8(uint8_t(qty * 2));
         for (size_t i = 0; i < qty; ++i) {
@@ -503,7 +474,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
         size_t start = r.u16be();
         size_t qty = r.u16be();
         size_t byteCount = r.u8();
-        if (qty < 1 || qty > 1968 || byteCount != (qty + 7) / 8)
+        if (qty < 1 || qty > limits::kWriteBits || byteCount != (qty + 7) / 8)
             return exception(function, ex::kIllegalDataValue);
         const uint8_t* bits = r.take(byteCount);
         if (start + qty > input.size() * 8)
@@ -524,7 +495,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
         size_t start = r.u16be();
         size_t qty = r.u16be();
         size_t byteCount = r.u8();
-        if (qty < 1 || qty > 123 || byteCount != qty * 2)
+        if (qty < 1 || qty > limits::kWriteRegisters || byteCount != qty * 2)
             return exception(function, ex::kIllegalDataValue);
         const uint8_t* data = r.take(byteCount);
         if (start + qty > inputRegisters())
@@ -559,7 +530,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
         size_t writeStart = r.u16be();
         size_t writeQty = r.u16be();
         size_t byteCount = r.u8();
-        if (readQty < 1 || readQty > 125 || writeQty < 1 || writeQty > 121 || byteCount != writeQty * 2)
+        if (readQty < 1 || readQty > limits::kReadRegisters || writeQty < 1 || writeQty > limits::kReadWriteWriteRegisters || byteCount != writeQty * 2)
             return exception(function, ex::kIllegalDataValue);
         const uint8_t* data = r.take(byteCount);
         if (writeStart + writeQty > inputRegisters())
@@ -589,7 +560,7 @@ std::vector<uint8_t> ModbusSlave::Impl::execute(uint8_t function, ByteReader& r,
     return std::move(w.data());
 }
 
-std::vector<uint8_t> ModbusSlave::Impl::readDeviceId(ByteReader& r)
+std::vector<uint8_t> ModbusServer::Impl::readDeviceId(ByteReader& r)
 {
     uint8_t mei = r.u8();
     if (mei != fc::kMeiReadDeviceId)
@@ -630,13 +601,13 @@ std::vector<uint8_t> ModbusSlave::Impl::readDeviceId(ByteReader& r)
 // Public API
 // ===========================================================================
 
-ModbusSlave::ModbusSlave(ModbusSlaveConfig config) : impl_(std::make_unique<Impl>(std::move(config))) {}
-ModbusSlave::~ModbusSlave() = default;
+ModbusServer::ModbusServer(ModbusServerConfig config) : impl_(std::make_unique<Impl>(std::move(config))) {}
+ModbusServer::~ModbusServer() = default;
 
-bool ModbusSlave::start(std::string* error) { return impl_->start(error); }
-void ModbusSlave::stop() { impl_->stop(); }
+bool ModbusServer::start(std::string* error) { return impl_->start(error); }
+void ModbusServer::stop() { impl_->stop(); }
 
-bool ModbusSlave::ioRead(size_t offset, void* data, size_t len) const
+bool ModbusServer::ioRead(size_t offset, void* data, size_t len) const
 {
     if (offset > impl_->cfg.inputSize || len > impl_->cfg.inputSize - offset)
         return false;
@@ -645,7 +616,7 @@ bool ModbusSlave::ioRead(size_t offset, void* data, size_t len) const
     return true;
 }
 
-bool ModbusSlave::ioWrite(size_t offset, const void* data, size_t len)
+bool ModbusServer::ioWrite(size_t offset, const void* data, size_t len)
 {
     if (offset > impl_->cfg.outputSize || len > impl_->cfg.outputSize - offset)
         return false;
@@ -654,17 +625,17 @@ bool ModbusSlave::ioWrite(size_t offset, const void* data, size_t len)
     return true;
 }
 
-std::vector<uint8_t> ModbusSlave::inputData() const
+std::vector<uint8_t> ModbusServer::inputData() const
 {
     std::lock_guard<std::mutex> lock(impl_->dataMutex);
     return std::vector<uint8_t>(impl_->input.begin(),
                                 impl_->input.begin() + static_cast<std::ptrdiff_t>(impl_->cfg.inputSize));
 }
 
-size_t ModbusSlave::inputSize() const { return impl_->cfg.inputSize; }
-size_t ModbusSlave::outputSize() const { return impl_->cfg.outputSize; }
-bool ModbusSlave::masterConnected() const { return impl_->masterUp; }
+size_t ModbusServer::inputSize() const { return impl_->cfg.inputSize; }
+size_t ModbusServer::outputSize() const { return impl_->cfg.outputSize; }
+bool ModbusServer::clientConnected() const { return impl_->clientUp; }
 
-std::vector<uint8_t> ModbusSlave::processPdu(const uint8_t* pdu, size_t len) { return impl_->processPdu(pdu, len); }
+std::vector<uint8_t> ModbusServer::processPdu(const uint8_t* pdu, size_t len) { return impl_->processPdu(pdu, len); }
 
 } // namespace softmb

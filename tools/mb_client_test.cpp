@@ -1,10 +1,10 @@
-// Minimal Modbus master used to test mb_slave_demo without a PLC.
+// Minimal Modbus master used to test mb_server_demo without a PLC.
 // Exercises every supported function code, the exception paths, the unit-id
 // filter and TCP pipelining, then measures the request rate.
 //
-// Usage: mb_master_sim [--target IP] [--port N] [--transport tcp|udp] [--unit N]
+// Usage: mb_client_test [--target IP] [--port N] [--transport tcp|udp] [--unit N]
 //                      [--in-size N] [--out-size N] [--seconds N]
-// Sizes must match the slave (defaults match mb_slave_demo: 64 / 64, unit 1).
+// Sizes must match the slave (defaults match mb_server_demo: 64 / 64, unit 1).
 #include "softeip/bytes.hpp"
 #include "softeip/socket_compat.hpp"
 

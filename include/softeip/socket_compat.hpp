@@ -116,6 +116,80 @@ inline void setRecvTimeoutMs(socket_t s, unsigned ms)
 #endif
 }
 
+inline void setSendTimeoutMs(socket_t s, unsigned ms)
+{
+#ifdef _WIN32
+    DWORD t = ms;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&t), sizeof t);
+#else
+    timeval tv{};
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+#endif
+}
+
+inline bool setNonBlocking(socket_t s, bool on)
+{
+#ifdef _WIN32
+    u_long mode = on ? 1 : 0;
+    return ioctlsocket(s, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl(s, F_GETFL, 0);
+    if (flags < 0)
+        return false;
+    return fcntl(s, F_SETFL, on ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK)) == 0;
+#endif
+}
+
+// Waits until the socket is readable. Returns 1 readable, 0 timeout, -1 error.
+inline int waitReadable(socket_t s, unsigned ms)
+{
+    fd_set rs;
+    FD_ZERO(&rs);
+    FD_SET(s, &rs);
+    timeval tv{};
+    tv.tv_sec = static_cast<long>(ms / 1000);
+    tv.tv_usec = static_cast<long>((ms % 1000) * 1000);
+    int r = ::select(static_cast<int>(s + 1), &rs, nullptr, nullptr, &tv);
+    return r > 0 ? 1 : (r == 0 ? 0 : -1);
+}
+
+// TCP connect that gives up after `ms` (a blocking connect to an unreachable host can hang
+// for ~20 s on Windows). The socket is back in blocking mode on return.
+inline bool connectWithTimeout(socket_t s, const sockaddr_in& to, unsigned ms)
+{
+    if (!setNonBlocking(s, true))
+        return false;
+    int r = ::connect(s, reinterpret_cast<const sockaddr*>(&to), sizeof to);
+    bool ok = r == 0;
+    if (!ok) {
+#ifdef _WIN32
+        const bool pending = WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+        const bool pending = errno == EINPROGRESS;
+#endif
+        if (pending) {
+            fd_set ws, es;
+            FD_ZERO(&ws);
+            FD_ZERO(&es);
+            FD_SET(s, &ws);
+            FD_SET(s, &es);
+            timeval tv{};
+            tv.tv_sec = static_cast<long>(ms / 1000);
+            tv.tv_usec = static_cast<long>((ms % 1000) * 1000);
+            if (::select(static_cast<int>(s + 1), nullptr, &ws, &es, &tv) > 0 && FD_ISSET(s, &ws)) {
+                int err = 0;
+                socklen_t len = sizeof err;
+                getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len);
+                ok = err == 0;
+            }
+        }
+    }
+    setNonBlocking(s, false);
+    return ok;
+}
+
 inline void setNoDelay(socket_t s)
 {
     int on = 1;
