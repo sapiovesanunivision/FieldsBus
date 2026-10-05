@@ -37,7 +37,10 @@ FC 43/14 (device identification, basic objects) is also supported.
 - [x] `examples/fb_device_demo.cpp`: the same echo app on every transport
 
 ### 6c: `SoftFieldbus.Net` (C++/CLI) + C# sample
-- [ ] Wrapper + sample (cannot be compiled here; Windows verification goes through HANDOFF)
+- [x] `dotnet/SoftFieldbusNet.h/.cpp`: `SoftFieldbus.FieldbusDevice`, `FieldbusTransport` and `FieldbusState` enums, `byte[] IoRead()`, `IoRead(offset, buffer)`, `IoWrite(offset, data)` (also before `Start`), events `InputsChanged` / `StateChanged` / `Log`
+- [x] `dotnet/fieldbus_sample/`: C# sample, transport chosen on the command line
+- [x] `dotnet/CMakeLists.txt`: `/clr` settings factored into `softfb_clr_assembly()`, shared with `SoftEip.Net`
+- [ ] **Build and run on Windows / VS 2026.** This can't be done in the Linux container (no MSVC / C++/CLI); see `docs/HANDOFF.md` §6
 
 ### 6d: Docs
 - [ ] README Modbus section, HANDOFF, roadmap
