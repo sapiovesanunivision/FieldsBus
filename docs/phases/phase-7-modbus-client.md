@@ -64,8 +64,8 @@ libmodbus and without its limits. In the same phase, every Modbus name says its 
   - `write-register(s)`, `write-coil(s)`;
   - `poll --read/--write TABLE:ADDR:COUNT`.
 - [x] README (Roles, client section, renames, roadmap, layout), PLAN phase 7, HANDOFF rows and trouble spots
-- [ ] EasyModbus over **TCP**: its TCP listener was off during the test, so only UDP was tested (see below)
-- [ ] Visual check in EasyModbus' UI of the written values and the +1 address offset; value changed in the UI shows up in `mb_client poll`
+- [x] EasyModbus over **TCP** (2026-10-07, see below)
+- [x] Visual check in EasyModbus' UI of the written values and the +1 address offset; value changed in the UI shows up in `mb_client poll`
 
 ## Windows results (2026-10-05, VS 2026, MSVC 19.51, loopback)
 
@@ -104,6 +104,30 @@ receive buffer brought it up.
 | `read-holding 65530 6` (past the end of its table) | ✅ exception 02 (illegal data address), shown by name |
 | `read-holding 65530 10` | ✅ rejected locally (`InvalidArgument`: address + count > 65536) |
 | `poll --write holding:100:4 --read holding:100:4 --read coils:0:24`, 100 ms, 5 s | ✅ 50 cycles, 0 failed, counter 1..5 read back, max period 100.6 ms |
+
+**Interop with EasyModbus Server Simulator (TCP 502, 2026-10-07):**
+
+| Test | Result |
+|---|---|
+| `read-holding`, `read-input`, `read-coils`, `read-discrete` | ✅ |
+| `write-register 9 4321`, `write-registers 10 100 200 300` → `read-holding 9 4` | ✅ 4321 / 100 / 200 / 300 |
+| `write-coil 7 1`, `write-coils 20 1 0 1 1` → `read-coils 0 24` | ✅ |
+| `read-holding 65530 6` (past the end of its table) | ✅ exception 02 (illegal data address), shown by name |
+| `read-holding 65530 10` | ✅ rejected locally (`InvalidArgument`: address + count > 65536) |
+| `poll --write holding:100:4 --read holding:100:4 --read coils:0:24`, 100 ms, 5 s | ✅ 0 failed, counter 1..5 read back; only 19 cycles, max cycle 850 ms (see below) |
+| Visual check in the EasyModbus UI | ✅ holding 9..12 shown at **10..13**, coils 7 and 20..23 shown at **8** and **21..24**: the UI counts from 1 |
+| Value changed in the UI (register 1 in the UI = 777) | ✅ `poll --read holding:0:8` printed `holding 0..7: 777 0 …`; 882 cycles in 90 s, 0 failed |
+
+**EasyModbus TCP is slow on reads.** Reads took 100–800 ms per request in some runs; writes stayed fast. In a later
+90 s run the max cycle was 236 ms. The same 2-read poll against `mb_server_demo --port 1502` over TCP ran 297 cycles in
+3 s, max period 11.8 ms, so the delay is in EasyModbus, not in the client (which sets `TCP_NODELAY`). Use EasyModbus
+for interop checks, not for timing.
+
+Stopping and restarting EasyModbus during a TCP `poll` was not repeated; the TCP reconnect is covered by the
+`mb_server_demo` run above.
+
+**`mb_client poll` prints a table only when its values change.** A read area that is all zeros at start-up is not
+printed until a value changes.
 
 **Finding:** during the first test runs, both `mb_server_demo` and EasyModbus had **UDP port 502** open, with
 `SO_REUSEADDR`, and some datagrams meant for `mb_server_demo` reached EasyModbus. Its holding registers 2..4 showed our
