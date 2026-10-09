@@ -12,6 +12,16 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
+      "name": "vs2026-analyze",
+      "displayName": "Visual Studio 2026 (x64), SoftFieldbus.dll + /analyze",
+      "description": "Like Dev.3: one DLL, code analysis, warnings as errors. No .NET wrapper.",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/vs2026-analyze",
+      "cacheVariables": { "SOFTFIELDBUS_SHARED": "ON", "SOFTFIELDBUS_ANALYZE": "ON", "SOFTEIP_BUILD_DOTNET": "OFF" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "vs2022",
       "displayName": "Visual Studio 2022 (x64)",
       "generator": "Visual Studio 17 2022",
@@ -31,6 +41,7 @@
   "buildPresets": [
     { "name": "vs2026-debug",   "configurePreset": "vs2026", "configuration": "Debug" },
     { "name": "vs2026-release", "configurePreset": "vs2026", "configuration": "Release" },
+    { "name": "vs2026-analyze-debug", "configurePreset": "vs2026-analyze", "configuration": "Debug" },
     { "name": "vs2022-release", "configurePreset": "vs2022", "configuration": "Release" },
     { "name": "linux",          "configurePreset": "linux" }
   ]

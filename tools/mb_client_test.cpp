@@ -443,6 +443,114 @@ int main(int argc, char** argv)
         check(ok && same && st.failedCycles == 0, buf);
     }
 
+    // ---- Poller: OnDemand writes, flushOutputs, initWrites, stop() aborts ----------
+    // The UvcIOModBus replacement needs these: nothing is written unless the application asks,
+    // each write goes out at once (a pulse is two telegrams), a watchdog register write is sent
+    // after every (re)connect, and close() does not wait for a request timeout.
+    {
+        ModbusServerConfig sc;
+        sc.bindAddress = o.target;
+        sc.port = uint16_t(o.port + 3);
+        sc.enableTcp = !o.udp;
+        sc.enableUdp = o.udp;
+        sc.inputSize = 8400; // holding registers up to 4199: 0x1043 / 0x1044 exist, 5000 does not
+        sc.outputSize = 8;
+        sc.raiseThreadPriority = false;
+        std::atomic<int> serverChanges{0};
+        sc.onInputsChanged = [&](const std::vector<uint8_t>&) { ++serverChanges; };
+        ModbusServer srv(sc);
+        std::string serr;
+        const bool serverUp = srv.start(&serr);
+
+        auto reg = [&](uint16_t r) {
+            uint8_t b[2] = {};
+            srv.ioRead(size_t(r) * 2, b, 2);
+            return uint16_t((b[0] << 8) | b[1]);
+        };
+        auto coilByte = [&]() {
+            uint8_t b = 0xEE;
+            srv.ioRead(5, &b, 1); // coils 40..47
+            return b;
+        };
+
+        ModbusClientPollerConfig pc;
+        pc.client = cfg;
+        pc.client.port = sc.port;
+        pc.client.onLog = nullptr;
+        pc.cycleMs = 20;
+        pc.inputSize = 1;
+        pc.outputSize = 1;
+        pc.reads = {{Table::DiscreteInputs, 0, 8, 0}};
+        pc.writes = {{Table::Coils, 40, 8, 0}};
+        pc.writeMode = WriteMode::OnDemand;
+        pc.initWrites = {{0x1044, 0xC1}, {0x1043, 0xC0}, {5000, 1}};
+        ModbusClientPoller poller(pc);
+        std::string perr;
+        bool ok = serverUp && poller.start(&perr);
+        auto deadline = Clock::now() + std::chrono::seconds(2);
+        while (ok && !poller.online() && Clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        check(ok && poller.online() && reg(0x1044) == 0xC1 && reg(0x1043) == 0xC0,
+              "poller initWrites: registers 0x1044 = 0xC1, 0x1043 = 0xC0 written, exception for 5000 ignored, online" +
+                  (serverUp ? std::string() : " [server: " + serr + "]"));
+
+        const uint8_t all = 0xFF;
+        poller.ioWrite(0, &all, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        check(coilByte() == 0x00, "poller OnDemand: the poll thread writes nothing on its own (coils 40..47 still 0)");
+
+        const int before = serverChanges;
+        const uint8_t on = 0x01, off = 0x00;
+        poller.ioWrite(0, &on, 1);
+        const Result r1 = poller.flushOutputs();
+        const uint8_t afterOn = coilByte();
+        poller.ioWrite(0, &off, 1);
+        const Result r2 = poller.flushOutputs();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const int pulses = serverChanges - before;
+        check(r1.ok() && r2.ok() && afterOn == 0x01 && coilByte() == 0x00 && pulses >= 2,
+              "poller flushOutputs: a pulse (coil 40 on, off) is two FC15 writes, both seen by the server (" +
+                  std::to_string(pulses) + " changes)");
+        poller.stop();
+        srv.stop();
+    }
+    {
+        // A server that never answers (it only serves unit 7; the client asks unit 3).
+        ModbusServerConfig sc;
+        sc.bindAddress = o.target;
+        sc.port = uint16_t(o.port + 4);
+        sc.enableTcp = !o.udp;
+        sc.enableUdp = o.udp;
+        sc.unitId = 7;
+        sc.raiseThreadPriority = false;
+        ModbusServer mute(sc);
+        const bool serverUp = mute.start();
+
+        ModbusClientPollerConfig pc;
+        pc.client = cfg;
+        pc.client.port = sc.port;
+        pc.client.unitId = 3;
+        pc.client.onLog = nullptr;
+        pc.client.responseTimeoutMs = 3000;
+        pc.client.retries = 0;
+        pc.cycleMs = 20;
+        pc.inputSize = 2;
+        pc.reads = {{Table::HoldingRegisters, 0, 1, 0}};
+        ModbusClientPoller poller(pc);
+        const bool ok = serverUp && poller.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(300)); // a request is waiting for its reply
+        const auto pending = poller.stats(); // no cycle may have completed yet
+        const auto t0 = Clock::now();
+        poller.stop();
+        const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        mute.stop();
+        char buf[160];
+        std::snprintf(buf, sizeof buf,
+                      "poller stop() aborts a request waiting for its reply: %.0f ms (timeout 3000 ms, %llu cycles before)",
+                      ms, static_cast<unsigned long long>(pending.cycles));
+        check(ok && pending.cycles == 0 && ms < 200, buf);
+    }
+
     // ---- Request rate -------------------------------------------------
     {
         uint32_t count = 0, errors = 0;

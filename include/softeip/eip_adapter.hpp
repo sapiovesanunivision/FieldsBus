@@ -15,18 +15,7 @@
 #include <string>
 #include <vector>
 
-// SOFTEIP_SHARED is defined (by CMake) when softeip is built/used as a DLL.
-#if defined(_WIN32) && defined(SOFTEIP_SHARED)
-#ifdef SOFTEIP_BUILDING_DLL
-#define SOFTEIP_API __declspec(dllexport)
-#else
-#define SOFTEIP_API __declspec(dllimport)
-#endif
-#elif defined(SOFTEIP_SHARED)
-#define SOFTEIP_API __attribute__((visibility("default")))
-#else
-#define SOFTEIP_API
-#endif
+#include "softeip/export.hpp" // SOFTEIP_API
 
 namespace softeip {
 

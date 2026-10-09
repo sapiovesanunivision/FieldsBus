@@ -969,7 +969,7 @@ std::vector<uint8_t> Adapter::Impl::forwardOpen(uint8_t service, ByteReader& r, 
     c.t2oId = t2oIdProposed != 0 ? t2oIdProposed : nextConnectionId++;
     c.t2oRpiUs = t2oRpi;
     if (o2t.type != NetParams::Null)
-        c.timeoutUs = uint64_t(o2tRpi) * (4u << std::min<uint8_t>(timeoutMultiplier, 7));
+        c.timeoutUs = uint64_t(o2tRpi) * (uint64_t(4) << std::min<uint8_t>(timeoutMultiplier, 7));
     c.originator = ctx.peer.sin_addr;
     c.t2oDest.sin_family = AF_INET;
     c.t2oDest.sin_addr = ctx.peer.sin_addr;

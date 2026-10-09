@@ -5,6 +5,7 @@
 
 #include "softeip/socket_compat.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -82,9 +83,10 @@ struct ModbusClient::Impl {
     void closeSocket();
     void dropConnection(const std::string& why);
     Result exchange(uint8_t unit, const std::vector<uint8_t>& pdu, std::vector<uint8_t>& response);
-    enum class Rx { Ok, Timeout, Broken };
+    enum class Rx { Ok, Timeout, Broken, Aborted };
     Rx receive(uint16_t tid, Clock::time_point deadline, std::vector<uint8_t>& pdu);
     Rx fillRx(Clock::time_point deadline); // TCP: append whatever arrived to rxBuf
+    Rx waitData(Clock::time_point deadline); // Ok = readable; waits in slices so abort() is seen
 
     void log(const std::string& msg) const
     {
@@ -106,6 +108,7 @@ struct ModbusClient::Impl {
     bool lastConnectFailed = false;
     Clock::time_point lastConnectAttempt{};
     std::atomic<bool> up{false};
+    std::atomic<bool> aborting{false}; // set by abort() without the mutex
 };
 
 bool ModbusClient::Impl::resolve(std::string* error)
@@ -201,15 +204,30 @@ void ModbusClient::Impl::dropConnection(const std::string& why)
     up = false;
 }
 
-ModbusClient::Impl::Rx ModbusClient::Impl::fillRx(Clock::time_point deadline)
+ModbusClient::Impl::Rx ModbusClient::Impl::waitData(Clock::time_point deadline)
 {
     // Timeout vs broken is decided here, not by comparing clocks afterwards (msUntil rounds down,
     // so a select with 0 ms can return just before the deadline).
-    int w = softeip::waitReadable(sock, msUntil(deadline));
-    if (w == 0)
-        return Rx::Timeout;
-    if (w < 0)
-        return Rx::Broken;
+    constexpr unsigned kSliceMs = 50;
+    for (;;) {
+        const unsigned left = msUntil(deadline);
+        const int w = softeip::waitReadable(sock, std::min(left, kSliceMs));
+        if (w > 0)
+            return Rx::Ok;
+        if (w < 0)
+            return Rx::Broken;
+        if (aborting)
+            return Rx::Aborted;
+        if (left <= kSliceMs)
+            return Rx::Timeout;
+    }
+}
+
+ModbusClient::Impl::Rx ModbusClient::Impl::fillRx(Clock::time_point deadline)
+{
+    const Rx w = waitData(deadline);
+    if (w != Rx::Ok)
+        return w;
     uint8_t chunk[512];
     int r = softeip::recvBytes(sock, chunk, sizeof chunk);
     if (r <= 0)
@@ -244,11 +262,9 @@ ModbusClient::Impl::Rx ModbusClient::Impl::receive(uint16_t expectTid, Clock::ti
             std::memcpy(buf, rxBuf.data(), n);
             rxBuf.erase(rxBuf.begin(), rxBuf.begin() + std::ptrdiff_t(n));
         } else {
-            int w = softeip::waitReadable(sock, msUntil(deadline));
-            if (w == 0)
-                return Rx::Timeout;
-            if (w < 0)
-                return Rx::Broken;
+            const Rx w = waitData(deadline);
+            if (w != Rx::Ok)
+                return w;
             sockaddr_in from{};
             int r = softeip::recvFrom(sock, buf, sizeof buf, from);
             if (r < int(kMbapSize + 1))
@@ -278,6 +294,10 @@ Result ModbusClient::Impl::exchange(uint8_t unit, const std::vector<uint8_t>& re
 
     ResultCode last = ResultCode::Timeout;
     for (unsigned attempt = 0; attempt <= cfg.retries; ++attempt) {
+        if (aborting) {
+            last = ResultCode::NotConnected;
+            break;
+        }
         std::string err;
         if (!open(&err)) {
             last = ResultCode::NotConnected; // retries are for lost replies, not for an unreachable server
@@ -311,6 +331,11 @@ Result ModbusClient::Impl::exchange(uint8_t unit, const std::vector<uint8_t>& re
                 return {ResultCode::ProtocolError, 0};
             return {ResultCode::Ok, 0};
         }
+        if (rx == Rx::Aborted) {
+            dropConnection("aborted");
+            last = ResultCode::NotConnected;
+            break;
+        }
         if (rx == Rx::Broken) {
             dropConnection("connection broken");
             last = ResultCode::NotConnected;
@@ -336,6 +361,7 @@ bool ModbusClient::connect(std::string* error)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->lastConnectFailed = false; // explicit connect: no reconnect delay
+    impl_->aborting = false;
     return impl_->open(error);
 }
 
@@ -344,7 +370,10 @@ void ModbusClient::close()
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->closeSocket();
     impl_->up = false;
+    impl_->aborting = false;
 }
+
+void ModbusClient::abort() { impl_->aborting = true; }
 
 bool ModbusClient::connected() const { return impl_->up; }
 const ModbusClientConfig& ModbusClient::config() const { return impl_->cfg; }

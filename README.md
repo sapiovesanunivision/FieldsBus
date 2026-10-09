@@ -150,7 +150,10 @@ byte[] outputs = eip.GetOutputs();
 - **MAUI:** this only works for the Windows target, because C++/CLI is Windows-only.
 
 **Native C++ DLL instead of a static lib:** configure with `-DSOFTEIP_SHARED=ON` to get `softeip.dll`, which exports
-`softeip::Adapter`. The consuming app must use the same compiler and runtime (/MD).
+`softeip::Adapter`. `-DSOFTFIELDBUS_SHARED=ON` builds `SoftFieldbus.dll` with everything (EtherNet/IP, Modbus server
+and client, `FieldbusDevice`), like the Dev.3 build; consumers define `SOFTFIELDBUS_SHARED`. The consuming app must
+use the same compiler and runtime (/MD). The preset `vs2026-analyze` builds that DLL with `/analyze /WX`, the checks
+Dev.3 runs in Debug.
 
 ## Testing without a PLC
 
@@ -330,6 +333,10 @@ poller.ioRead(0, in, 32);     // PLC -> PC, refreshed every cycle
 - **Reads** are published atomically. After a communication error, `online()` goes false and the last values are kept;
   the outputs are written again once the server answers.
 - **Timing:** `stats()` reports cycles, failures and the maximum cycle and period, for jitter.
+- **Write on demand:** `WriteMode::OnDemand` + `flushOutputs()` send the outputs only when the application asks,
+  from its own thread (a pulse is two telegrams). `initWrites` are FC06 writes sent after every (re)connect, e.g. a
+  coupler watchdog reset. This is how the Dev.3 `UvcIOSoftModBus` plugin reproduces `UvcIOModBus`.
+- **`stop()`** aborts a request that is waiting for its reply (within ~50 ms), instead of waiting for the timeout.
 
 **Manual client:** `mb_client`, for any server.
 ```sh
@@ -398,8 +405,11 @@ EtherNet/IP device" entry if the tool has one, with the same instances, sizes an
    variable map (name, type, offset, bit, byte order) shared with the PLC project, with typed get/set by name.
 6. **Modbus RTU** over USB-RS485 adapters / RTU-over-TCP, for the server (reuses the PDU engine) and the client.
 7. **Modbus client in `FieldbusDevice` and .NET:** `ModbusClientPoller` as a transport of the common API, plus
-   `SoftFieldbus.Net`. Also a Dev.3 `IODevice` adapter DLL, so ProInspect can replace `UvcIOModBus`.
-8. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
+   `SoftFieldbus.Net`.
+8. **Dev.3 integration** (in progress, `docs/dev3-integration.md`): `SoftFieldbus145_x64(d).dll` in `Dev\Sdk\UvX`,
+   the `UvcIOSoftModBus` IODevice plugin (replaces `UvcIOModBus`), and `ProInspectProcessImageSoftFieldbusService`
+   (replaces the Hilscher cifX process-image service).
+9. **PROFINET RT device** as a separate module: Npcap for Layer 2, then DCP, LLDP, RPC connect, cyclic RT and alarms, plus a GSDML file.
    This is a large effort, about 5–10× the work of EtherNet/IP. An alternative is porting p-net (GPL or commercial license) to Npcap.
 
 **Build vs. reuse:** [OpENer](https://github.com/EIPStackGroup/OpENer) is a mature open-source EtherNet/IP adapter in C
@@ -415,6 +425,6 @@ include/softmb/    Modbus TCP/UDP server (ModbusServer) and client (ModbusClient
 src/               implementations
 dotnet/            C++/CLI wrappers (SoftFieldbus.Net.dll, SoftEip.Net.dll) + C# samples
 examples/          demo devices (fb_device_demo, eip_adapter_demo, mb_server_demo)
-tools/             test peers and clients (eip_scanner_sim, mb_client_test, mb_client)
+tools/             test peers and clients (eip_scanner_sim, mb_client_test, mb_client), sync-to-dev3.ps1
 docs/              plan, phase documents, HANDOFF.md (Windows build/verify steps)
 ```

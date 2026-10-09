@@ -75,7 +75,12 @@ struct DeviceConfig {
     std::function<void(DeviceState)> onStateChanged;
 };
 
-class FieldbusDevice {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
+#endif
+
+class SOFTFB_API FieldbusDevice {
 public:
     explicit FieldbusDevice(DeviceConfig config);
     ~FieldbusDevice();
@@ -103,5 +108,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 } // namespace softfb

@@ -12,6 +12,8 @@
 // For a cyclic process image (poll the PLC every N ms) see softmb::ModbusClientPoller.
 #pragma once
 
+#include "softeip/export.hpp" // SOFTMB_API
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -48,16 +50,21 @@ enum class ResultCode {
     InvalidArgument  // rejected locally (quantity 0 or above the protocol limit, address overflow, ...)
 };
 
-struct Result {
+struct SOFTMB_API Result {
     ResultCode code = ResultCode::Ok;
     uint8_t exception = 0; // Modbus exception code when code == Exception
     bool ok() const { return code == ResultCode::Ok; }
     std::string text() const; // e.g. "ok", "exception 02 (illegal data address)", "timeout"
 };
 
-const char* resultCodeName(ResultCode code);
+SOFTMB_API const char* resultCodeName(ResultCode code);
 
-class ModbusClient {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
+#endif
+
+class SOFTMB_API ModbusClient {
 public:
     explicit ModbusClient(ModbusClientConfig config);
     ~ModbusClient();
@@ -67,6 +74,10 @@ public:
     // Optional: TCP connects (requests connect on demand anyway); UDP opens the local socket.
     bool connect(std::string* error = nullptr);
     void close();
+    // Thread-safe, does not wait: a request waiting for its reply (or the next request) returns
+    // NotConnected within ~50 ms instead of waiting for its timeout. A TCP connect in progress still
+    // finishes (at most connectTimeoutMs). Cleared by close() and connect().
+    void abort();
     // TCP: connection open. UDP: the last request was answered.
     bool connected() const;
     const ModbusClientConfig& config() const;
@@ -95,5 +106,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 } // namespace softmb

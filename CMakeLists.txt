@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SOFTEIP_SHARED "Build softeip as a native C++ DLL / shared library instead of a static lib" OFF)
+option(SOFTFIELDBUS_SHARED "Also build SoftFieldbus.dll (softeip + softmb + softfb in one DLL, as in Dev.3); mb_client_test links it" OFF)
+option(SOFTFIELDBUS_ANALYZE "MSVC: compile our native targets with /analyze /WX (catches what Dev.3's code analysis flags)" OFF)
 if(MSVC)
     set(_dotnet_default ON)
 else()
@@ -27,6 +29,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 function(softeip_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /utf-8 /permissive- /MP)
+        if(SOFTFIELDBUS_ANALYZE)
+            target_compile_options(${target} PRIVATE /analyze /analyze:external- /WX)
+        endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -80,7 +85,6 @@ target_link_libraries(mb_server_demo PRIVATE softmb)
 softeip_warnings(mb_server_demo)
 
 add_executable(mb_client_test tools/mb_client_test.cpp)
-target_link_libraries(mb_client_test PRIVATE softmb)
 softeip_warnings(mb_client_test)
 
 add_executable(mb_client tools/mb_client.cpp)
@@ -95,6 +99,28 @@ softeip_warnings(softfieldbus)
 add_executable(fb_device_demo examples/fb_device_demo.cpp)
 target_link_libraries(fb_device_demo PRIVATE softfieldbus)
 softeip_warnings(fb_device_demo)
+
+# ---- Everything in one DLL: SoftFieldbus.dll (the Dev.3 SoftFieldbus*.dll is built from the same sources) ----
+if(SOFTFIELDBUS_SHARED)
+    add_library(softfieldbus_shared SHARED
+        src/eip_adapter.cpp src/modbus_server.cpp src/modbus_client.cpp src/modbus_client_poller.cpp
+        src/fieldbus_device.cpp)
+    # Import library in its own folder: on Windows SoftFieldbus.lib and the static softfieldbus.lib are the same file name.
+    set_target_properties(softfieldbus_shared PROPERTIES OUTPUT_NAME SoftFieldbus FOLDER "native"
+                          ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared-lib
+                          CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+    target_include_directories(softfieldbus_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(softfieldbus_shared PUBLIC SOFTFIELDBUS_SHARED PRIVATE SOFTFIELDBUS_BUILDING_DLL)
+    target_link_libraries(softfieldbus_shared PUBLIC Threads::Threads)
+    if(WIN32)
+        target_link_libraries(softfieldbus_shared PUBLIC ws2_32 winmm)
+        target_compile_definitions(softfieldbus_shared PUBLIC _WIN32_WINNT=0x0601)
+    endif()
+    softeip_warnings(softfieldbus_shared)
+    target_link_libraries(mb_client_test PRIVATE softfieldbus_shared) # catches missing exports
+else()
+    target_link_libraries(mb_client_test PRIVATE softmb)
+endif()
 
 # Visual Studio solution niceties
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT eip_adapter_demo)

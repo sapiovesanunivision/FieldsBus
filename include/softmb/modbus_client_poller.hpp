@@ -34,7 +34,17 @@ struct PollArea {
 
 enum class WriteMode {
     OnChange,   // write an area only when its bytes changed (and again after every communication error)
-    EveryCycle  // write every area every cycle
+    EveryCycle, // write every area every cycle
+    OnDemand    // the poll thread never writes on its own; the application calls flushOutputs()
+                // (see resendOutputsOnReconnect). Used to replace UvcIOModBus, which sent each write at once.
+};
+
+// A single register write (FC06) sent before the first cycle and again before the first cycle after
+// every communication error, e.g. a coupler watchdog reset. A Modbus exception reply is logged and
+// ignored (the server may not have that register); a timeout or lost connection fails the cycle.
+struct InitWrite {
+    uint16_t address = 0;
+    uint16_t value = 0;
 };
 
 struct ModbusClientPollerConfig {
@@ -45,6 +55,10 @@ struct ModbusClientPollerConfig {
     std::vector<PollArea> reads;   // any table
     std::vector<PollArea> writes;  // Table::Coils or Table::HoldingRegisters
     WriteMode writeMode = WriteMode::OnChange;
+    // OnDemand only: after a communication error, write the whole output image again in the first
+    // good cycle. Off by default: outputs set while the server was unreachable are not replayed.
+    bool resendOutputsOnReconnect = false;
+    std::vector<InitWrite> initWrites;
     bool raiseThreadPriority = false;
 
     // Called on the poll thread; keep them short.
@@ -53,7 +67,12 @@ struct ModbusClientPollerConfig {
     std::function<void(bool online)> onOnlineChanged; // false after a failed cycle, true after a good one
 };
 
-class ModbusClientPoller {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
+#endif
+
+class SOFTMB_API ModbusClientPoller {
 public:
     explicit ModbusClientPoller(ModbusClientPollerConfig config);
     ~ModbusClientPoller();
@@ -67,6 +86,9 @@ public:
     // Thread-safe process image access. Return false when offset+len is out of range.
     bool ioRead(size_t offset, void* data, size_t len) const;   // input image  (server -> PC)
     bool ioWrite(size_t offset, const void* data, size_t len);  // output image (PC -> server)
+    // Writes every write area now, from the calling thread (one request per area chunk), and
+    // returns the first error. Serialized with the poll thread's writes. Works in every WriteMode.
+    Result flushOutputs();
     std::vector<uint8_t> inputData() const;
 
     // true while the last cycle completed (all reads and writes answered).
@@ -86,5 +108,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 } // namespace softmb

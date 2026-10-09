@@ -43,6 +43,7 @@ struct ModbusClientPoller::Impl {
         if (!cfg.client.onLog && cfg.onLog)
             cfg.client.onLog = cfg.onLog;
         written.assign(cfg.writes.size(), std::vector<uint8_t>());
+        initExceptionLogged.assign(cfg.initWrites.size(), false);
         client = std::make_unique<ModbusClient>(cfg.client);
     }
     ~Impl() { stop(); }
@@ -52,6 +53,8 @@ struct ModbusClientPoller::Impl {
     void stop();
     void run();
     bool cycle(std::string& error);
+    bool sendInitWrites(std::string& error); // caller holds writeMutex
+    bool writeAreas(bool all, std::string& error, Result* first); // caller holds writeMutex
     Result readArea(const PollArea& a, std::vector<uint8_t>& image);
     Result writeArea(const PollArea& a, const uint8_t* bytes);
     void setOnline(bool up, const std::string& why);
@@ -71,7 +74,13 @@ struct ModbusClientPoller::Impl {
     mutable std::mutex dataMutex;
     std::vector<uint8_t> input;  // server -> PC, guarded by dataMutex
     std::vector<uint8_t> output; // PC -> server, guarded by dataMutex
-    std::vector<std::vector<uint8_t>> written; // per write area: bytes last written OK (empty = must write); poll thread only
+    // Guards the write side (written, initPending, resendPending) and serializes the poll thread's
+    // writes with flushOutputs() from the application thread.
+    std::mutex writeMutex;
+    std::vector<std::vector<uint8_t>> written; // per write area: bytes last written OK (empty = must write)
+    bool initPending = true;    // initWrites must be sent before the next reads
+    bool resendPending = false; // OnDemand + resendOutputsOnReconnect: a cycle failed since the last write
+    std::vector<bool> initExceptionLogged;
 
     mutable std::mutex statsMutex;
     Stats stats;
@@ -117,6 +126,13 @@ bool ModbusClientPoller::Impl::start(std::string* error)
         return true;
     if (!validate(error))
         return false;
+    {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        initPending = true;
+        resendPending = false;
+        for (auto& w : written)
+            w.clear();
+    }
     running = true;
     thread = std::thread([this] { run(); });
     log("Modbus client poller started: server " + cfg.client.host + ":" + std::to_string(cfg.client.port) + " (" +
@@ -129,6 +145,7 @@ bool ModbusClientPoller::Impl::start(std::string* error)
 void ModbusClientPoller::Impl::stop()
 {
     running = false;
+    client->abort(); // a request waiting for its reply returns at once
     if (thread.joinable())
         thread.join();
     client->close();
@@ -206,8 +223,61 @@ Result ModbusClientPoller::Impl::writeArea(const PollArea& a, const uint8_t* byt
     return {};
 }
 
+bool ModbusClientPoller::Impl::sendInitWrites(std::string& error)
+{
+    for (size_t i = 0; i < cfg.initWrites.size(); ++i) {
+        const InitWrite& w = cfg.initWrites[i];
+        Result r = client->writeSingleRegister(w.address, w.value);
+        if (r.code == ResultCode::Exception) {
+            if (!initExceptionLogged[i])
+                log("init write register " + std::to_string(w.address) + " = " + std::to_string(w.value) +
+                    " ignored: " + r.text());
+            initExceptionLogged[i] = true;
+            continue;
+        }
+        if (!r.ok()) {
+            error = "init write register " + std::to_string(w.address) + ": " + r.text();
+            return false;
+        }
+    }
+    initPending = false;
+    return true;
+}
+
+bool ModbusClientPoller::Impl::writeAreas(bool all, std::string& error, Result* first)
+{
+    std::vector<uint8_t> out;
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        out = output;
+    }
+    for (size_t i = 0; i < cfg.writes.size(); ++i) {
+        const PollArea& a = cfg.writes[i];
+        const uint8_t* bytes = out.data() + a.imageOffset;
+        std::vector<uint8_t> slice(bytes, bytes + areaBytes(a));
+        if (!all && written[i] == slice)
+            continue;
+        Result r = writeArea(a, bytes);
+        if (!r.ok()) {
+            written[i].clear(); // write again after the error
+            error = std::string("write ") + tableName(a.table) + " @" + std::to_string(a.address) + ": " + r.text();
+            if (first)
+                *first = r;
+            return false;
+        }
+        written[i] = std::move(slice);
+    }
+    return true;
+}
+
 bool ModbusClientPoller::Impl::cycle(std::string& error)
 {
+    {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        if (initPending && !sendInitWrites(error))
+            return false;
+    }
+
     // Reads: into a copy, published only when all reads succeeded (no half-updated image).
     std::vector<uint8_t> next;
     {
@@ -232,26 +302,16 @@ bool ModbusClientPoller::Impl::cycle(std::string& error)
         cfg.onInputsChanged(next);
 
     // Writes
-    std::vector<uint8_t> out;
-    {
-        std::lock_guard<std::mutex> lock(dataMutex);
-        out = output;
-    }
-    for (size_t i = 0; i < cfg.writes.size(); ++i) {
-        const PollArea& a = cfg.writes[i];
-        const uint8_t* bytes = out.data() + a.imageOffset;
-        std::vector<uint8_t> slice(bytes, bytes + areaBytes(a));
-        if (cfg.writeMode == WriteMode::OnChange && written[i] == slice)
-            continue;
-        Result r = writeArea(a, bytes);
-        if (!r.ok()) {
-            written[i].clear(); // write again after the error
-            error = std::string("write ") + tableName(a.table) + " @" + std::to_string(a.address) + ": " + r.text();
+    std::lock_guard<std::mutex> lock(writeMutex);
+    if (cfg.writeMode == WriteMode::OnDemand) {
+        if (!(cfg.resendOutputsOnReconnect && resendPending))
+            return true;
+        if (!writeAreas(true, error, nullptr))
             return false;
-        }
-        written[i] = std::move(slice);
+        resendPending = false;
+        return true;
     }
-    return true;
+    return writeAreas(cfg.writeMode == WriteMode::EveryCycle, error, nullptr);
 }
 
 void ModbusClientPoller::Impl::run()
@@ -268,8 +328,11 @@ void ModbusClientPoller::Impl::run()
         const bool ok = cycle(error);
         const double cycleMs = msSince(start);
         if (!ok) {
+            std::lock_guard<std::mutex> lock(writeMutex);
             for (auto& w : written)
                 w.clear(); // after reconnecting, the server gets the current outputs again
+            initPending = true;
+            resendPending = true;
         }
         {
             std::lock_guard<std::mutex> lock(statsMutex);
@@ -319,6 +382,15 @@ bool ModbusClientPoller::ioWrite(size_t offset, const void* data, size_t len)
     std::lock_guard<std::mutex> lock(impl_->dataMutex);
     std::memcpy(impl_->output.data() + offset, data, len);
     return true;
+}
+
+Result ModbusClientPoller::flushOutputs()
+{
+    std::lock_guard<std::mutex> lock(impl_->writeMutex);
+    std::string error;
+    Result first;
+    impl_->writeAreas(true, error, &first);
+    return first;
 }
 
 std::vector<uint8_t> ModbusClientPoller::inputData() const

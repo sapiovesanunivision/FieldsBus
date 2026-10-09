@@ -151,7 +151,7 @@ int runPoll(const ModbusClientConfig& cc, int argc, char** argv, int i)
             const uint8_t* p = in.data() + a.imageOffset;
             if (isBits(a.table)) {
                 for (size_t b = 0; b < a.count && b < 64; ++b)
-                    std::printf("%s%d", b % 8 ? "" : " ", (p[b / 8] >> (b % 8)) & 1);
+                    std::printf("%s%d", (b % 8) != 0 ? "" : " ", (p[b / 8] >> (b % 8)) & 1);
             } else {
                 for (size_t r = 0; r < a.count && r < 16; ++r)
                     std::printf(" %u", unsigned((p[r * 2] << 8) | p[r * 2 + 1]));

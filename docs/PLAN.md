@@ -231,3 +231,15 @@ Details and results: `docs/phases/phase-7-modbus-client.md`.
 - the client as a `FieldbusDevice` transport and in `SoftFieldbus.Net`;
 - RTU for both roles;
 - a Dev.3 `IODevice` adapter DLL, so ProInspect can replace `UvcIOModBus`.
+
+## Phase 8 plan: Dev.3 integration
+
+Approved 2026-10-09. GitHub stays master; Dev.3 builds a mirror under `Dev\Sdk\UvX` (`tools/sync-to-dev3.ps1`).
+- **8a (here):** export macros + `SOFTFIELDBUS_SHARED` DLL + `/analyze` preset; poller `OnDemand` / `flushOutputs` /
+  `initWrites` / abortable `stop()`; sync script.
+- **8b (Dev.3):** `SoftFieldbus1x.vcxproj` → `SoftFieldbus145_x64(d).dll`, wrapper header with auto-link.
+- **8c (Dev.3):** `UvcIOSoftModBus` IODevice plugin (same `IOModBus.ini`, `baseName "ModBus"`) + unit test.
+- **8d (Dev.3):** `ProInspectProcessImageSoftFieldbusService`, a copy of the Hilscher service with cifX replaced by
+  `FieldbusDevice` (device roles only: EtherNet/IP adapter, Modbus TCP/UDP server).
+
+Details, checklist and results: `docs/phases/phase-8-dev3.md`; layout and sync: `docs/dev3-integration.md`.

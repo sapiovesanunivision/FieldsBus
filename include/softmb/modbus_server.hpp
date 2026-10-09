@@ -18,6 +18,8 @@
 //   outputsInHoldingAt, for clients that only speak FC03/FC16.
 #pragma once
 
+#include "softeip/export.hpp" // SOFTMB_API
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -61,7 +63,12 @@ struct ModbusServerConfig {
     std::function<void(bool clientConnected)> onConnectionChanged; // a Modbus client (PLC) is polling
 };
 
-class ModbusServer {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
+#endif
+
+class SOFTMB_API ModbusServer {
 public:
     explicit ModbusServer(ModbusServerConfig config);
     ~ModbusServer();
@@ -91,5 +98,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 } // namespace softmb
