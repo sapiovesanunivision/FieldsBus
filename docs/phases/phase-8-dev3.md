@@ -141,3 +141,15 @@ ProInspect side played on the shared memory):
 | Modbus TCP | ✅ +5 per second | ✅ appTag 42 result 2, appTag 43 result 1 |
 | Modbus UDP | ✅ | ✅ |
 | EtherNet/IP | ✅ | ✅ (identity "ProInspect SoftFieldbus", Forward_Open OK) |
+
+### 8e follow-up: registry layout, .reg files, simpler same-PC test (Dev.3 820e5c7066)
+
+- Service registry: `Parameters` (DebugMode, Msec, Slot, CompleteAppTag, Transport, BindAddress),
+  `Parameters\eip` (InputInstance, OutputInstance, ConfigInstance, MinRpiUs, ProductName),
+  `Parameters\modbus` (Port, UnitId, OutputsInHoldingAt, ByteOrder). Ready-made
+  `Registry\ProInspectProcessImageSoftFieldbusService_{eip,modbus_tcp,modbus_udp}.reg` (whole tree, only Transport
+  differs), also installed next to the service; the installer writes the same layout.
+- PLC simulator: defaults from the service's registry on the same PC, host 127.0.0.1; transport optional
+  (`eip`, `modbus` = TCP); Modbus byte order `swap` supported too. Same-PC test: `ProInspectProcessImagePlcSim`.
+- Tested with the built-in defaults on both sides (no registry key, no admin rights): Modbus TCP 502 with `swap`, and
+  EtherNet/IP, machine mode and view results OK. Importing the `.reg` files needs admin rights (not tested here).
