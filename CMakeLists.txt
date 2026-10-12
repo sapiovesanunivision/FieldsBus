@@ -39,15 +39,17 @@ endfunction()
 
 set(SOFTEIP_HEADERS
     include/softeip/eip_adapter.hpp
+    include/softeip/eip_scanner.hpp
+    include/softeip/export.hpp
     include/softeip/bytes.hpp
     include/softeip/cip_defs.hpp
     include/softeip/socket_compat.hpp
 )
 if(SOFTEIP_SHARED)
-    add_library(softeip SHARED src/eip_adapter.cpp ${SOFTEIP_HEADERS})
+    add_library(softeip SHARED src/eip_adapter.cpp src/eip_scanner.cpp ${SOFTEIP_HEADERS})
     target_compile_definitions(softeip PUBLIC SOFTEIP_SHARED PRIVATE SOFTEIP_BUILDING_DLL)
 else()
-    add_library(softeip STATIC src/eip_adapter.cpp ${SOFTEIP_HEADERS})
+    add_library(softeip STATIC src/eip_adapter.cpp src/eip_scanner.cpp ${SOFTEIP_HEADERS})
 endif()
 source_group("Header Files" FILES ${SOFTEIP_HEADERS})
 target_include_directories(softeip PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -103,8 +105,8 @@ softeip_warnings(fb_device_demo)
 # ---- Everything in one DLL: SoftFieldbus.dll (the Dev.3 SoftFieldbus*.dll is built from the same sources) ----
 if(SOFTFIELDBUS_SHARED)
     add_library(softfieldbus_shared SHARED
-        src/eip_adapter.cpp src/modbus_server.cpp src/modbus_client.cpp src/modbus_client_poller.cpp
-        src/fieldbus_device.cpp)
+        src/eip_adapter.cpp src/eip_scanner.cpp src/modbus_server.cpp src/modbus_client.cpp
+        src/modbus_client_poller.cpp src/fieldbus_device.cpp)
     # Import library in its own folder: on Windows SoftFieldbus.lib and the static softfieldbus.lib are the same file name.
     set_target_properties(softfieldbus_shared PROPERTIES OUTPUT_NAME SoftFieldbus FOLDER "native"
                           ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared-lib
