@@ -120,3 +120,24 @@ The installer (`ProInspectProcessImagesSoftFieldbusService145_x64.iss`) compiles
 **Sync script** tested on an empty Dev.3-shaped folder, with PowerShell 5.1 and 7: first run adds 16 files, a
 second run changes nothing, `-WhatIf` writes nothing, a hand-edited mirror file stops the sync, `-Force` overwrites
 it and removes a stale file.
+
+## 8e: PLC simulator for the process image (2026-10-12)
+
+- FieldsBus `b547c2b`: `softeip::Scanner` (EtherNet/IP scanner / originator) in the library; `eip_scanner_sim` rebuilt
+  on it (PASS on Windows, also `--skip-close`, and Linux; `/analyze` clean).
+- Dev.3 `5362cf0131`: sync (2 files added) + `eip_scanner.cpp` in `SoftFieldbus1x.vcxproj`.
+- Dev.3 `1d88849eac`: `ProInspectProcessImagePlcSim` (`UvpProcessImage`, in `main3.sln`): plays the PLC of the
+  service over EtherNet/IP (scanner, T->O on UDP 2223) or Modbus TCP/UDP (client, holding registers 0..55 written,
+  input registers 0..125 read, structs sent as they are: service `ModbusByteOrder=none`). REPL with the service's
+  keys; machine mode = `viewControl[view].acquisitionControl += 1` every N ms on one view (as the
+  `ProInspectProcessImageService` demo `acquire`), printing the view results. The service's `-process` takes the byte
+  order too: `-process modbus-tcp 1502 none`.
+
+Loopback test (owner `ProInspectProcessImageService -process`, service, simulator `--machine 200 --view 1`, the
+ProInspect side played on the shared memory):
+
+| Transport | acquisitionControl in the process image | view results back in the simulator |
+|---|---|---|
+| Modbus TCP | ✅ +5 per second | ✅ appTag 42 result 2, appTag 43 result 1 |
+| Modbus UDP | ✅ | ✅ |
+| EtherNet/IP | ✅ | ✅ (identity "ProInspect SoftFieldbus", Forward_Open OK) |
