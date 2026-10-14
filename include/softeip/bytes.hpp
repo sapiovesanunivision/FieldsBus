@@ -1,6 +1,7 @@
-// Little-endian (CIP) / big-endian (sockaddr) serialization helpers.
+// Little-endian (CIP) / big-endian (sockaddr, PROFINET) serialization helpers.
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -18,6 +19,7 @@ public:
     void u16(uint16_t v) { u8(uint8_t(v)); u8(uint8_t(v >> 8)); }
     void u32(uint32_t v) { u16(uint16_t(v)); u16(uint16_t(v >> 16)); }
     void u16be(uint16_t v) { u8(uint8_t(v >> 8)); u8(uint8_t(v)); }
+    void u32be(uint32_t v) { u16be(uint16_t(v >> 16)); u16be(uint16_t(v)); }
     void bytes(const void* p, size_t n)
     {
         auto b = static_cast<const uint8_t*>(p);
@@ -29,6 +31,22 @@ public:
     {
         buf_[offset] = uint8_t(v);
         buf_[offset + 1] = uint8_t(v >> 8);
+    }
+    void patchU16be(size_t offset, uint16_t v)
+    {
+        buf_[offset] = uint8_t(v >> 8);
+        buf_[offset + 1] = uint8_t(v);
+    }
+    void patchU32be(size_t offset, uint32_t v)
+    {
+        patchU16be(offset, uint16_t(v >> 16));
+        patchU16be(offset + 2, uint16_t(v));
+    }
+    // Overwrites n bytes at offset (the range must already exist).
+    void bytesAt(size_t offset, const void* p, size_t n)
+    {
+        auto b = static_cast<const uint8_t*>(p);
+        std::copy(b, b + n, buf_.begin() + static_cast<std::ptrdiff_t>(offset));
     }
     size_t size() const { return buf_.size(); }
     std::vector<uint8_t>& data() { return buf_; }
@@ -64,6 +82,12 @@ public:
         uint16_t lo = u8();
         return uint16_t((hi << 8) | lo);
     }
+    uint32_t u32be()
+    {
+        uint32_t hi = u16be();
+        uint32_t lo = u16be();
+        return (hi << 16) | lo;
+    }
     const uint8_t* take(size_t n)
     {
         need(n);
@@ -73,6 +97,13 @@ public:
     }
     void skip(size_t n) { take(n); }
     size_t remaining() const { return n_ - pos_; }
+    size_t pos() const { return pos_; }
+    void seek(size_t pos)
+    {
+        if (pos > n_)
+            throw ParseError("seek beyond end");
+        pos_ = pos;
+    }
     const uint8_t* cur() const { return p_ + pos_; }
 
 private:

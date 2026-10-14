@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GSDML for the Univision software PROFINET device (softpn), Conformance Class A, RT_CLASS_1.
+
+  PoC file:
+  - VendorID 0xFFFF is a PLACEHOLDER. Replace it (and DeviceConfig::vendorId) with the PI vendor ID
+    assigned to Univision before any use outside the lab.
+  - The ident numbers must match src/pn/pn_model.cpp (pn_selftest checks them).
+  - Validate with the PI GSDML Checker after every change.
+
+  Slot 1: one "Input N bytes" module  (data PC -> PLC)
+  Slot 2: one "Output N bytes" module (data PLC -> PC)
+  N must equal DeviceConfig::inputSize / outputSize of the running device.
+-->
+<ISO15745Profile xmlns="http://www.profibus.com/GSDML/2003/11/DeviceProfile"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="http://www.profibus.com/GSDML/2003/11/DeviceProfile ../xsd/GSDML-DeviceProfile-V2.43.xsd">
+  <ProfileHeader>
+    <ProfileIdentification>PROFINET Device Profile</ProfileIdentification>
+    <ProfileRevision>1.00</ProfileRevision>
+    <ProfileName>Device Profile for PROFINET Devices</ProfileName>
+    <ProfileSource>PROFIBUS Nutzerorganisation e. V. (PNO)</ProfileSource>
+    <ProfileClassID>Device</ProfileClassID>
+    <ISO15745Reference>
+      <ISO15745Part>4</ISO15745Part>
+      <ISO15745Edition>1</ISO15745Edition>
+      <ProfileTechnology>GSDML</ProfileTechnology>
+    </ISO15745Reference>
+  </ProfileHeader>
+  <ProfileBody>
+    <DeviceIdentity VendorID="0xFFFF" DeviceID="0x0001">
+      <InfoText TextId="T_DeviceInfo"/>
+      <VendorName Value="Univision"/>
+    </DeviceIdentity>
+    <DeviceFunction>
+      <Family MainFamily="I/O" ProductFamily="SoftPN"/>
+    </DeviceFunction>
+    <ApplicationProcess>
+      <DeviceAccessPointList>
+        <DeviceAccessPointItem ID="DAP1" PhysicalSlots="0..2" ModuleIdentNumber="0x00000001"
+                               MinDeviceInterval="32" ImplementationType="Software"
+                               DNS_CompatibleName="softpn-device" FixedInSlots="0" ObjectUUID_LocalIndex="1"
+                               RequiredSchemaVersion="V2.4" MultipleWriteSupported="true"
+                               PNIO_Version="V2.43" NumberOfDeviceAccessAR="1" DeviceAccessSupported="false"
+                               CheckDeviceID_Allowed="true" LLDP_NoD_Supported="true" ResetToFactoryModes="2">
+          <ModuleInfo>
+            <Name TextId="T_DAP_Name"/>
+            <InfoText TextId="T_DAP_Info"/>
+            <VendorName Value="Univision"/>
+            <OrderNumber Value="SOFTPN-1"/>
+            <HardwareRelease Value="1"/>
+            <SoftwareRelease Value="V0.1.0"/>
+          </ModuleInfo>
+          <CertificationInfo ConformanceClass="A" ApplicationClass="" NetloadClass="I"/>
+          <IOConfigData MaxInputLength="1440" MaxOutputLength="1440"/>
+          <UseableModules>
+            <ModuleItemRef ModuleItemTarget="IN16" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="IN32" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="IN64" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="IN128" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="IN256" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="OUT16" AllowedInSlots="2"/>
+            <ModuleItemRef ModuleItemTarget="OUT32" AllowedInSlots="2"/>
+            <ModuleItemRef ModuleItemTarget="OUT64" AllowedInSlots="2"/>
+            <ModuleItemRef ModuleItemTarget="OUT128" AllowedInSlots="2"/>
+            <ModuleItemRef ModuleItemTarget="OUT256" AllowedInSlots="2"/>
+          </UseableModules>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="DAP1_SUB" SubmoduleIdentNumber="0x00000001" FixedInSubslots="1"
+                                  MayIssueProcessAlarm="false">
+              <IOData/>
+              <ModuleInfo>
+                <Name TextId="T_DAP_Name"/>
+                <InfoText TextId="T_DAP_Info"/>
+              </ModuleInfo>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+          <SystemDefinedSubmoduleList>
+            <InterfaceSubmoduleItem ID="IF1" SubslotNumber="32768" SubmoduleIdentNumber="0x00008000"
+                                    TextId="T_Interface" SupportedRT_Classes="RT_CLASS_1"
+                                    SupportedProtocols="LLDP" DCP_HelloSupported="false">
+              <ApplicationRelations StartupMode="Advanced;Legacy">
+                <TimingProperties SendClock="32" ReductionRatio="8 16 32 64 128 256 512"/>
+              </ApplicationRelations>
+            </InterfaceSubmoduleItem>
+            <PortSubmoduleItem ID="PORT1" SubslotNumber="32769" SubmoduleIdentNumber="0x00008001"
+                               TextId="T_Port1" MaxPortRxDelay="350" MaxPortTxDelay="160">
+              <MAUTypeList>
+                <MAUTypeItem Value="16"/>
+              </MAUTypeList>
+            </PortSubmoduleItem>
+          </SystemDefinedSubmoduleList>
+        </DeviceAccessPointItem>
+      </DeviceAccessPointList>
+      <ModuleList>
+      <ModuleItem ID="IN16" ModuleIdentNumber="0x00000010">
+        <ModuleInfo>
+          <Name TextId="T_IN16"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN16_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="16" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN16"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="IN32" ModuleIdentNumber="0x00000011">
+        <ModuleInfo>
+          <Name TextId="T_IN32"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN32_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="32" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN32"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="IN64" ModuleIdentNumber="0x00000012">
+        <ModuleInfo>
+          <Name TextId="T_IN64"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN64_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="64" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN64"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="IN128" ModuleIdentNumber="0x00000013">
+        <ModuleInfo>
+          <Name TextId="T_IN128"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN128_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="128" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN128"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="IN256" ModuleIdentNumber="0x00000014">
+        <ModuleInfo>
+          <Name TextId="T_IN256"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN256_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="256" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN256"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT16" ModuleIdentNumber="0x00000020">
+        <ModuleInfo>
+          <Name TextId="T_OUT16"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT16_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="16" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT16"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT32" ModuleIdentNumber="0x00000021">
+        <ModuleInfo>
+          <Name TextId="T_OUT32"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT32_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="32" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT32"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT64" ModuleIdentNumber="0x00000022">
+        <ModuleInfo>
+          <Name TextId="T_OUT64"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT64_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="64" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT64"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT128" ModuleIdentNumber="0x00000023">
+        <ModuleInfo>
+          <Name TextId="T_OUT128"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT128_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="128" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT128"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT256" ModuleIdentNumber="0x00000024">
+        <ModuleInfo>
+          <Name TextId="T_OUT256"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT256_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="256" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT256"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      </ModuleList>
+      <ExternalTextList>
+        <PrimaryLanguage>
+          <Text TextId="T_DeviceInfo" Value="Univision software PROFINET IO-Device (PC, standard NIC)"/>
+          <Text TextId="T_DAP_Name" Value="SoftPN device"/>
+          <Text TextId="T_DAP_Info" Value="Software PROFINET RT device, update time 8 ms or more"/>
+          <Text TextId="T_Interface" Value="X1"/>
+          <Text TextId="T_Port1" Value="X1 P1"/>
+          <Text TextId="T_IN_Info" Value="Data from the PC to the PLC (slot 1)"/>
+          <Text TextId="T_OUT_Info" Value="Data from the PLC to the PC (slot 2)"/>
+          <Text TextId="T_IN_Data" Value="Input data"/>
+          <Text TextId="T_OUT_Data" Value="Output data"/>
+          <Text TextId="T_IN16" Value="Input 16 bytes (PC to PLC)"/>
+          <Text TextId="T_IN32" Value="Input 32 bytes (PC to PLC)"/>
+          <Text TextId="T_IN64" Value="Input 64 bytes (PC to PLC)"/>
+          <Text TextId="T_IN128" Value="Input 128 bytes (PC to PLC)"/>
+          <Text TextId="T_IN256" Value="Input 256 bytes (PC to PLC)"/>
+          <Text TextId="T_OUT16" Value="Output 16 bytes (PLC to PC)"/>
+          <Text TextId="T_OUT32" Value="Output 32 bytes (PLC to PC)"/>
+          <Text TextId="T_OUT64" Value="Output 64 bytes (PLC to PC)"/>
+          <Text TextId="T_OUT128" Value="Output 128 bytes (PLC to PC)"/>
+          <Text TextId="T_OUT256" Value="Output 256 bytes (PLC to PC)"/>
+        </PrimaryLanguage>
+      </ExternalTextList>
+    </ApplicationProcess>
+  </ProfileBody>
+</ISO15745Profile>

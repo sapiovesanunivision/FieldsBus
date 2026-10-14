@@ -16,6 +16,9 @@
 #ifndef SOFTFB_SHARED
 #define SOFTFB_SHARED
 #endif
+#ifndef SOFTPN_SHARED
+#define SOFTPN_SHARED
+#endif
 #endif
 
 #if defined(SOFTFIELDBUS_BUILDING_DLL)
@@ -27,6 +30,9 @@
 #endif
 #ifndef SOFTFB_BUILDING_DLL
 #define SOFTFB_BUILDING_DLL
+#endif
+#ifndef SOFTPN_BUILDING_DLL
+#define SOFTPN_BUILDING_DLL
 #endif
 #endif
 
@@ -65,5 +71,15 @@
 #define SOFTFB_API SOFTFIELDBUS_DETAIL_IMPORT
 #else
 #define SOFTFB_API
+#endif
+#endif
+
+#if !defined(SOFTPN_API)
+#if defined(SOFTPN_SHARED) && defined(SOFTPN_BUILDING_DLL)
+#define SOFTPN_API SOFTFIELDBUS_DETAIL_EXPORT
+#elif defined(SOFTPN_SHARED)
+#define SOFTPN_API SOFTFIELDBUS_DETAIL_IMPORT
+#else
+#define SOFTPN_API
 #endif
 #endif

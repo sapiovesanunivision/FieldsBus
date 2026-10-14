@@ -6,7 +6,7 @@
 // PC and PLC cast these bytes to agreed data types. Switching fieldbus is a config change:
 //
 //   softfb::DeviceConfig cfg;
-//   cfg.transport = softfb::Transport::ModbusTcp;   // or EtherNetIP, ModbusUdp, ModbusTcpUdp
+//   cfg.transport = softfb::Transport::ModbusTcp;   // or EtherNetIP, ModbusUdp, ModbusTcpUdp, ProfinetRt
 //   cfg.inputSize = 64; cfg.outputSize = 64;
 //   softfb::FieldbusDevice dev(cfg);
 //   dev.start();
@@ -18,6 +18,8 @@
 //                output area = T->O input assembly  (default 100)
 //   Modbus       input area  = holding registers / coils
 //                output area = input registers / discrete inputs
+//   PROFINET RT  input area  = output submodule, slot 2 (controller -> device)
+//                output area = input submodule,  slot 1 (device -> controller)
 #pragma once
 
 #include "softeip/eip_adapter.hpp" // IdentityInfo (header has no socket includes)
@@ -36,6 +38,7 @@ enum class Transport {
     ModbusTcp,
     ModbusUdp,
     ModbusTcpUdp, // one slave answering on both TCP and UDP
+    ProfinetRt,   // PROFINET RT IO-Device (softpn; on Windows the build needs the Npcap SDK)
 };
 
 enum class DeviceState {
@@ -69,6 +72,17 @@ struct DeviceConfig {
         std::string revision = "1.0";
     } modbus;
 
+    struct ProfinetOptions {
+        std::string adapter;                       // NIC: friendly name, MAC, IPv4 or Npcap name (bindAddress unused)
+        std::string stationName = "softpn-device"; // default NameOfStation
+        std::string persistPath = "softpn.ini";    // NameOfStation set by the controller over DCP
+        uint16_t vendorId = 0xFFFF;                // PLACEHOLDER until a PI vendor ID exists; must match the GSDML
+        uint16_t deviceId = 0x0001;
+        uint32_t minUpdateTimeMs = 8;
+        bool sendVlanTag = true;
+        bool promiscuous = false; // only if CODESYS / Proneta cannot find the device (see softpn::L2Options)
+    } profinet;
+
     // Callbacks run on the network thread; keep them short.
     std::function<void(const std::string&)> onLog;
     std::function<void(const std::vector<uint8_t>& inputs)> onInputsChanged; // the PLC wrote new data
@@ -101,7 +115,7 @@ public:
 
     static const char* transportName(Transport t);
     static const char* stateName(DeviceState s);
-    // Accepts "eip", "ethernetip", "modbus-tcp", "modbus-udp", "modbus" (= TCP+UDP).
+    // Accepts "eip", "ethernetip", "modbus-tcp", "modbus-udp", "modbus" (= TCP+UDP), "profinet" / "pn".
     static bool parseTransport(const std::string& text, Transport& out);
 
 private:

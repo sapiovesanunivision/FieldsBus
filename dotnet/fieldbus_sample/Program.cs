@@ -2,6 +2,7 @@
 //   input area  (PLC -> PC)  printed when the PLC changes it
 //   output area (PC -> PLC)  = echo of the input area, bytes 0..3 = heartbeat
 // Usage: SoftFieldbusSample [eip|modbus-tcp|modbus-udp|modbus] [bind-ip]
+//        SoftFieldbusSample profinet <adapter> [station-name]
 using System;
 using System.Threading;
 using SoftFieldbus;
@@ -15,6 +16,7 @@ if (args.Length > 0)
         "modbus-tcp" => FieldbusTransport.ModbusTcp,
         "modbus-udp" => FieldbusTransport.ModbusUdp,
         "modbus" => FieldbusTransport.ModbusTcpUdp,
+        "profinet" => FieldbusTransport.ProfinetRt,
         _ => throw new ArgumentException($"unknown transport {args[0]}"),
     };
 }
@@ -27,7 +29,15 @@ var cfg = new FieldbusDeviceConfig
     ModbusUnitId = 1,
     ProductName = "SoftFieldbus C# Sample",
 };
-if (args.Length > 1)
+if (transport == FieldbusTransport.ProfinetRt)
+{
+    if (args.Length < 2)
+        throw new ArgumentException("profinet needs the adapter, e.g.: SoftFieldbusSample profinet \"Ethernet 2\"");
+    cfg.ProfinetAdapter = args[1];
+    if (args.Length > 2)
+        cfg.ProfinetStationName = args[2];
+}
+else if (args.Length > 1)
     cfg.BindAddress = args[1];
 
 using var dev = new FieldbusDevice(cfg);

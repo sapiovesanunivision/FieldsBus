@@ -102,6 +102,106 @@ add_executable(fb_device_demo examples/fb_device_demo.cpp)
 target_link_libraries(fb_device_demo PRIVATE softfieldbus)
 softeip_warnings(fb_device_demo)
 
+# ---- PROFINET RT device (softpn): raw Ethernet via Npcap (Windows) or AF_PACKET (Linux) ----
+set(SOFTPN_NPCAP_SDK "$ENV{NPCAP_SDK}" CACHE PATH "Npcap SDK folder (Include/, Lib/x64/); empty = no PROFINET on Windows")
+set(SOFTPN_ENABLED OFF)
+if(WIN32)
+    if(SOFTPN_NPCAP_SDK AND EXISTS "${SOFTPN_NPCAP_SDK}/Include/pcap.h")
+        set(SOFTPN_ENABLED ON)
+    else()
+        message(STATUS "softpn (PROFINET) skipped: set SOFTPN_NPCAP_SDK to the Npcap SDK folder to build it")
+    endif()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(SOFTPN_ENABLED ON)
+endif()
+
+if(SOFTPN_ENABLED)
+    set(SOFTPN_SOURCES
+        src/pn/pn_frame.cpp
+        src/pn/l2_port_memory.cpp
+        src/pn/pn_station_store.cpp
+        src/pn/pn_dcp.cpp
+        src/pn/pn_lldp.cpp
+        src/pn/pn_rpc.cpp
+        src/pn/pn_blocks.cpp
+        src/pn/pn_model.cpp
+        src/pn/pn_cyclic.cpp
+        src/pn/pn_rta.cpp
+        src/pn/pn_ar.cpp
+        src/pn/pn_device.cpp
+    )
+    if(WIN32)
+        list(APPEND SOFTPN_SOURCES src/pn/l2_port_npcap.cpp)
+    else()
+        list(APPEND SOFTPN_SOURCES src/pn/l2_port_linux.cpp)
+    endif()
+    set(SOFTPN_HEADERS
+        include/softpn/l2_port.hpp
+        src/pn/pn_defs.hpp
+        src/pn/pn_frame.hpp
+        src/pn/pn_station_store.hpp
+        src/pn/pn_dcp.hpp
+        src/pn/pn_lldp.hpp
+        src/pn/pn_uuid.hpp
+        src/pn/pn_rpc.hpp
+        src/pn/pn_blocks.hpp
+        src/pn/pn_model.hpp
+        src/pn/pn_cyclic.hpp
+        src/pn/pn_rta.hpp
+        src/pn/pn_ar.hpp
+        include/softpn/pn_device.hpp
+    )
+    add_library(softpn STATIC ${SOFTPN_SOURCES} ${SOFTPN_HEADERS})
+    source_group("Header Files" FILES ${SOFTPN_HEADERS})
+    target_include_directories(softpn PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/pn)
+    target_link_libraries(softpn PUBLIC softeip)
+    softeip_warnings(softpn)
+    if(WIN32)
+        target_include_directories(softpn PRIVATE "${SOFTPN_NPCAP_SDK}/Include")
+        target_link_libraries(softpn PUBLIC "${SOFTPN_NPCAP_SDK}/Lib/x64/wpcap.lib" iphlpapi delayimp)
+        # wpcap.dll is loaded on first use from System32\Npcap: no Npcap = error message, not a crash.
+        target_link_options(softpn INTERFACE "/DELAYLOAD:wpcap.dll")
+    endif()
+    set_target_properties(softpn PROPERTIES FOLDER "native")
+
+    add_executable(pn_device_demo examples/pn_device_demo.cpp)
+    target_link_libraries(pn_device_demo PRIVATE softpn)
+    softeip_warnings(pn_device_demo)
+
+    add_executable(pn_probe tools/pn_probe.cpp)
+    target_include_directories(pn_probe PRIVATE src/pn)
+    target_link_libraries(pn_probe PRIVATE softpn)
+    softeip_warnings(pn_probe)
+
+    # The controller simulator class is shared by the CLI tool and the offline self-test.
+    add_library(pn_controller STATIC tools/pn_controller.cpp tools/pn_controller.hpp)
+    target_include_directories(pn_controller PUBLIC src/pn tools)
+    target_link_libraries(pn_controller PUBLIC softpn)
+    softeip_warnings(pn_controller)
+
+    add_executable(pn_controller_sim tools/pn_controller_sim.cpp)
+    target_link_libraries(pn_controller_sim PRIVATE pn_controller)
+    softeip_warnings(pn_controller_sim)
+
+    add_executable(pn_selftest tools/pn_selftest.cpp)
+    target_link_libraries(pn_selftest PRIVATE pn_controller)
+    target_compile_definitions(pn_selftest PRIVATE
+        SOFTPN_DEFAULT_GSDML="${CMAKE_CURRENT_SOURCE_DIR}/gsdml/GSDML-V2.43-Univision-SoftPN-20261013.xml")
+    softeip_warnings(pn_selftest)
+    enable_testing()
+    add_test(NAME pn_selftest COMMAND pn_selftest)
+
+    set_target_properties(pn_controller pn_probe pn_controller_sim pn_selftest PROPERTIES FOLDER "tools")
+    set_target_properties(pn_device_demo PROPERTIES FOLDER "examples"
+        VS_DEBUGGER_COMMAND_ARGUMENTS "--list")
+    set_target_properties(pn_probe PROPERTIES VS_DEBUGGER_COMMAND_ARGUMENTS "--list")
+
+    # PROFINET as a transport of the common API (softfb::FieldbusDevice, SoftFieldbus.Net).
+    target_link_libraries(softfieldbus PUBLIC softpn)
+    target_compile_definitions(softfieldbus PUBLIC SOFTFB_HAS_PROFINET=1)
+endif()
+
 # ---- Everything in one DLL: SoftFieldbus.dll (the Dev.3 SoftFieldbus*.dll is built from the same sources) ----
 if(SOFTFIELDBUS_SHARED)
     add_library(softfieldbus_shared SHARED
@@ -117,6 +217,16 @@ if(SOFTFIELDBUS_SHARED)
     if(WIN32)
         target_link_libraries(softfieldbus_shared PUBLIC ws2_32 winmm)
         target_compile_definitions(softfieldbus_shared PUBLIC _WIN32_WINNT=0x0601)
+    endif()
+    if(SOFTPN_ENABLED)
+        target_sources(softfieldbus_shared PRIVATE ${SOFTPN_SOURCES})
+        target_include_directories(softfieldbus_shared PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/pn)
+        target_compile_definitions(softfieldbus_shared PUBLIC SOFTFB_HAS_PROFINET=1)
+        if(WIN32)
+            target_include_directories(softfieldbus_shared PRIVATE "${SOFTPN_NPCAP_SDK}/Include")
+            target_link_libraries(softfieldbus_shared PRIVATE "${SOFTPN_NPCAP_SDK}/Lib/x64/wpcap.lib" iphlpapi delayimp)
+            target_link_options(softfieldbus_shared PRIVATE "/DELAYLOAD:wpcap.dll")
+        endif()
     endif()
     softeip_warnings(softfieldbus_shared)
     target_link_libraries(mb_client_test PRIVATE softfieldbus_shared) # catches missing exports

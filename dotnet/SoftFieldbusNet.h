@@ -1,5 +1,5 @@
 // SoftFieldbus.Net - .NET wrapper (C++/CLI) around softfb::FieldbusDevice.
-// One Hilscher-style API for every transport (EtherNet/IP, Modbus TCP/UDP).
+// One Hilscher-style API for every transport (EtherNet/IP, Modbus TCP/UDP, PROFINET RT).
 //
 // C# usage:
 //   var cfg = new FieldbusDeviceConfig { Transport = FieldbusTransport.ModbusTcp, InputSize = 64, OutputSize = 64 };
@@ -25,6 +25,8 @@ public enum class FieldbusTransport {
     ModbusTcp = 1,
     ModbusUdp = 2,
     ModbusTcpUdp = 3,
+    /// PROFINET RT IO-Device. Needs Npcap and a build configured with SOFTPN_NPCAP_SDK.
+    ProfinetRt = 4,
 };
 
 public enum class FieldbusState {
@@ -70,6 +72,18 @@ public:
     property String^ ModbusVendorName;
     property String^ ModbusProductCode;
     property String^ ModbusRevision;
+
+    // PROFINET RT (InputSize / OutputSize must be 16, 32, 64, 128 or 256)
+    /// NIC facing the PLC: friendly name ("Ethernet 2"), MAC or IPv4.
+    property String^ ProfinetAdapter;
+    property String^ ProfinetStationName;
+    /// File that keeps the NameOfStation assigned by the controller.
+    property String^ ProfinetPersistPath;
+    property int ProfinetVendorId;
+    property int ProfinetDeviceId;
+    property int ProfinetMinUpdateTimeMs;
+    property bool ProfinetSendVlanTag;
+    property bool ProfinetPromiscuous;
 };
 
 public ref class FieldbusInputsEventArgs sealed : EventArgs {

@@ -1,7 +1,10 @@
-// FieldbusDevice: maps the PC-view process image onto softeip / softmb.
+// FieldbusDevice: maps the PC-view process image onto softeip / softmb / softpn.
 #include "softfb/fieldbus_device.hpp"
 
 #include "softmb/modbus_server.hpp"
+#ifdef SOFTFB_HAS_PROFINET
+#include "softpn/pn_device.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -15,6 +18,7 @@ struct FieldbusDevice::Impl {
     explicit Impl(DeviceConfig c) : cfg(std::move(c)), outputShadow(cfg.outputSize, 0) {}
 
     bool isEip() const { return cfg.transport == Transport::EtherNetIP; }
+    bool isProfinet() const { return cfg.transport == Transport::ProfinetRt; }
 
     // Recomputes the state and reports changes (called from the network thread).
     void refreshState()
@@ -36,12 +40,25 @@ struct FieldbusDevice::Impl {
         }
         if (mb)
             return mb->clientConnected() ? DeviceState::ConnectedRun : DeviceState::WaitingForMaster;
+#ifdef SOFTFB_HAS_PROFINET
+        if (pn) {
+            switch (pn->state()) {
+            case softpn::DeviceState::DataRun: return DeviceState::ConnectedRun;
+            case softpn::DeviceState::DataStop: return DeviceState::ConnectedIdle;
+            case softpn::DeviceState::Stopped: return DeviceState::Stopped;
+            default: return DeviceState::WaitingForMaster; // no AR yet, or still parameterising
+            }
+        }
+#endif
         return DeviceState::Stopped;
     }
 
     DeviceConfig cfg;
     std::unique_ptr<softeip::Adapter> eip;
     std::unique_ptr<softmb::ModbusServer> mb;
+#ifdef SOFTFB_HAS_PROFINET
+    std::unique_ptr<softpn::Device> pn;
+#endif
     std::atomic<bool> started{false};
     std::atomic<DeviceState> lastState{DeviceState::Stopped};
 
@@ -92,6 +109,44 @@ bool FieldbusDevice::start(std::string* error)
             d.eip.reset();
             return false;
         }
+    } else if (d.isProfinet()) {
+#ifdef SOFTFB_HAS_PROFINET
+        softpn::DeviceConfig p;
+        p.adapter = c.profinet.adapter;
+        p.stationName = c.profinet.stationName;
+        p.persistPath = c.profinet.persistPath;
+        p.vendorId = c.profinet.vendorId;
+        p.deviceId = c.profinet.deviceId;
+        p.minUpdateTimeMs = c.profinet.minUpdateTimeMs;
+        p.sendVlanTag = c.profinet.sendVlanTag;
+        p.promiscuous = c.profinet.promiscuous;
+        // PROFINET names data from the device's view, like CIP: "input" = to the PLC.
+        p.inputSize = c.outputSize;
+        p.outputSize = c.inputSize;
+        p.raiseThreadPriority = c.raiseThreadPriority;
+        p.onLog = c.onLog;
+        p.onOutputs = [&d](const std::vector<uint8_t>& data, bool) {
+            if (d.cfg.onInputsChanged)
+                d.cfg.onInputsChanged(data);
+            d.refreshState();
+        };
+        p.onStateChanged = [&d](softpn::DeviceState) { d.refreshState(); };
+        d.pn = std::make_unique<softpn::Device>(p);
+        {
+            std::lock_guard<std::mutex> lock(d.shadowMutex);
+            d.pn->setInputData(d.outputShadow.data(), d.outputShadow.size());
+        }
+        d.started = true;
+        if (!d.pn->start(error)) {
+            d.started = false;
+            d.pn.reset();
+            return false;
+        }
+#else
+        if (error)
+            *error = "this build has no PROFINET support (configure CMake with SOFTPN_NPCAP_SDK)";
+        return false;
+#endif
     } else {
         softmb::ModbusServerConfig m;
         m.bindAddress = c.bindAddress;
@@ -134,10 +189,17 @@ void FieldbusDevice::stop()
         d.eip->stop(); // joins the network thread: no callbacks after this
     if (d.mb)
         d.mb->stop();
+#ifdef SOFTFB_HAS_PROFINET
+    if (d.pn)
+        d.pn->stop();
+#endif
     d.started = false;
     d.refreshState();
     d.eip.reset();
     d.mb.reset();
+#ifdef SOFTFB_HAS_PROFINET
+    d.pn.reset();
+#endif
 }
 
 bool FieldbusDevice::ioRead(size_t offset, void* data, size_t len) const
@@ -152,6 +214,13 @@ bool FieldbusDevice::ioRead(size_t offset, void* data, size_t len) const
     }
     if (d.mb)
         return d.mb->ioRead(offset, data, len);
+#ifdef SOFTFB_HAS_PROFINET
+    if (d.pn) {
+        std::vector<uint8_t> in = d.pn->outputData();
+        std::memcpy(data, in.data() + offset, len);
+        return true;
+    }
+#endif
     std::memset(data, 0, len); // not started: inputs read as zero
     return true;
 }
@@ -167,6 +236,10 @@ bool FieldbusDevice::ioWrite(size_t offset, const void* data, size_t len)
         d.eip->setInputData(d.outputShadow.data(), d.outputShadow.size());
     else if (d.mb)
         d.mb->ioWrite(offset, data, len);
+#ifdef SOFTFB_HAS_PROFINET
+    else if (d.pn)
+        d.pn->setInputData(d.outputShadow.data(), d.outputShadow.size());
+#endif
     return true;
 }
 
@@ -182,6 +255,7 @@ const char* FieldbusDevice::transportName(Transport t)
     case Transport::ModbusTcp: return "Modbus TCP";
     case Transport::ModbusUdp: return "Modbus UDP";
     case Transport::ModbusTcpUdp: return "Modbus TCP+UDP";
+    case Transport::ProfinetRt: return "PROFINET RT";
     }
     return "?";
 }
@@ -209,6 +283,8 @@ bool FieldbusDevice::parseTransport(const std::string& text, Transport& out)
         out = Transport::ModbusUdp;
     else if (t == "modbus")
         out = Transport::ModbusTcpUdp;
+    else if (t == "profinet" || t == "pn" || t == "profinet-rt")
+        out = Transport::ProfinetRt;
     else
         return false;
     return true;

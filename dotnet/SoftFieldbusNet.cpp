@@ -10,7 +10,8 @@ using namespace System;
 namespace SoftFieldbus {
 
 static_assert(int(softfb::Transport::EtherNetIP) == 0 && int(softfb::Transport::ModbusTcp) == 1 &&
-                  int(softfb::Transport::ModbusUdp) == 2 && int(softfb::Transport::ModbusTcpUdp) == 3,
+                  int(softfb::Transport::ModbusUdp) == 2 && int(softfb::Transport::ModbusTcpUdp) == 3 &&
+                  int(softfb::Transport::ProfinetRt) == 4,
               "FieldbusTransport must mirror softfb::Transport");
 static_assert(int(softfb::DeviceState::Stopped) == 0 && int(softfb::DeviceState::WaitingForMaster) == 1 &&
                   int(softfb::DeviceState::ConnectedIdle) == 2 && int(softfb::DeviceState::ConnectedRun) == 3,
@@ -63,6 +64,18 @@ softfb::DeviceConfig toNative(FieldbusDeviceConfig^ c)
         n.modbus.productCode = toStd(c->ModbusProductCode);
     if (c->ModbusRevision != nullptr)
         n.modbus.revision = toStd(c->ModbusRevision);
+
+    if (c->ProfinetAdapter != nullptr)
+        n.profinet.adapter = toStd(c->ProfinetAdapter);
+    if (c->ProfinetStationName != nullptr)
+        n.profinet.stationName = toStd(c->ProfinetStationName);
+    if (c->ProfinetPersistPath != nullptr)
+        n.profinet.persistPath = toStd(c->ProfinetPersistPath);
+    n.profinet.vendorId = uint16_t(checkRange(c->ProfinetVendorId, 0, 0xFFFF, "ProfinetVendorId"));
+    n.profinet.deviceId = uint16_t(checkRange(c->ProfinetDeviceId, 0, 0xFFFF, "ProfinetDeviceId"));
+    n.profinet.minUpdateTimeMs = uint32_t(checkRange(c->ProfinetMinUpdateTimeMs, 1, 512, "ProfinetMinUpdateTimeMs"));
+    n.profinet.sendVlanTag = c->ProfinetSendVlanTag;
+    n.profinet.promiscuous = c->ProfinetPromiscuous;
     return n;
 }
 
@@ -120,6 +133,15 @@ FieldbusDeviceConfig::FieldbusDeviceConfig()
     ModbusVendorName = gcnew String(d.modbus.vendorName.c_str());
     ModbusProductCode = gcnew String(d.modbus.productCode.c_str());
     ModbusRevision = gcnew String(d.modbus.revision.c_str());
+
+    ProfinetAdapter = gcnew String(d.profinet.adapter.c_str());
+    ProfinetStationName = gcnew String(d.profinet.stationName.c_str());
+    ProfinetPersistPath = gcnew String(d.profinet.persistPath.c_str());
+    ProfinetVendorId = d.profinet.vendorId;
+    ProfinetDeviceId = d.profinet.deviceId;
+    ProfinetMinUpdateTimeMs = int(d.profinet.minUpdateTimeMs);
+    ProfinetSendVlanTag = d.profinet.sendVlanTag;
+    ProfinetPromiscuous = d.profinet.promiscuous;
 }
 
 // ---------------------------------------------------------------------------

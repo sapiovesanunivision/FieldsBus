@@ -2,8 +2,9 @@
 //   input area  (PLC -> PC)  printed whenever the PLC changes it
 //   output area (PC -> PLC)  = echo of the input area, bytes 0..3 replaced by a heartbeat counter
 //
-// Usage: fb_device_demo --transport eip|modbus-tcp|modbus-udp|modbus
+// Usage: fb_device_demo --transport eip|modbus-tcp|modbus-udp|modbus|profinet
 //                       [--bind IP] [--in-size N] [--out-size N] [--port N] [--unit N]
+//                       [--adapter NIC] [--station NAME]   (PROFINET; sizes 16/32/64/128/256)
 #include "softfb/fieldbus_device.hpp"
 
 #include <algorithm>
@@ -66,6 +67,10 @@ int main(int argc, char** argv)
             cfg.modbus.port = uint16_t(n);
         else if (k == "--unit")
             cfg.modbus.unitId = uint8_t(n);
+        else if (k == "--adapter")
+            cfg.profinet.adapter = v;
+        else if (k == "--station")
+            cfg.profinet.stationName = v;
         else {
             std::fprintf(stderr, "unknown option %s\n", k.c_str());
             return 2;

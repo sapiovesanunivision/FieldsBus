@@ -88,4 +88,63 @@ private:
 #endif
 };
 
+// Waits until an absolute steady_clock time (one-shot). On Windows a high-resolution one-shot
+// waitable timer wakes much closer to the deadline than the ticks of a periodic 1 ms timer,
+// which fire every ~1.5 ms on some PCs.
+class DeadlineTimer {
+public:
+    DeadlineTimer()
+    {
+#ifdef _WIN32
+        timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        highResolution_ = timer_ != nullptr;
+        if (!timer_)
+            timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+#endif
+    }
+    ~DeadlineTimer()
+    {
+#ifdef _WIN32
+        if (timer_)
+            CloseHandle(timer_);
+#endif
+    }
+    DeadlineTimer(const DeadlineTimer&) = delete;
+    DeadlineTimer& operator=(const DeadlineTimer&) = delete;
+
+    void waitUntil(std::chrono::steady_clock::time_point deadline)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (deadline <= now)
+            return;
+#ifdef _WIN32
+        if (timer_) {
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count();
+            LARGE_INTEGER due;
+            due.QuadPart = -static_cast<LONGLONG>(ns / 100); // relative, 100 ns units
+            if (SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE)) {
+                WaitForSingleObject(timer_, INFINITE);
+                return;
+            }
+        }
+#endif
+        std::this_thread::sleep_until(deadline);
+    }
+
+    const char* kind() const
+    {
+#ifdef _WIN32
+        if (timer_)
+            return highResolution_ ? "high-resolution one-shot timer" : "one-shot waitable timer";
+#endif
+        return "steady_clock sleep_until";
+    }
+
+private:
+#ifdef _WIN32
+    HANDLE timer_ = nullptr;
+    bool highResolution_ = false;
+#endif
+};
+
 } // namespace softeip
