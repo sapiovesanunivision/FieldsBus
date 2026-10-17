@@ -1,51 +1,21 @@
-// Npcap backend of L2Port (Windows).
+// Npcap backend of L2Port (Windows), chosen by l2_port_windows.cpp.
 //
 // - wpcap.dll is delay-loaded (/DELAYLOAD:wpcap.dll). Before the first pcap call we load it from
 //   System32\Npcap ourselves, so a missing Npcap becomes an error message instead of a crash and
 //   the global DLL search path is not touched.
 // - Two pcap handles: RX (BPF-filtered, non-blocking, waited on with pcap_getevent) and TX
 //   (filter that matches nothing), because a pcap_t must not be used by two threads at once.
-#include "softpn/l2_port.hpp"
+#include "l2_port_windows.hpp"
 
 #include "pn_defs.hpp"
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#include <iphlpapi.h>
-
 #include <pcap.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <mutex>
 
 namespace softpn {
 namespace {
-
-std::string narrow(const wchar_t* w)
-{
-    if (!w || !*w)
-        return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n > 0 ? n - 1 : 0), '\0');
-    if (n > 1)
-        WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
-    return s;
-}
-
-std::string lower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 // Loads Packet.dll and wpcap.dll from System32\Npcap once. Afterwards the delay-load helper finds
 // the already loaded modules by name.
@@ -69,47 +39,26 @@ bool loadNpcap(std::string* error)
     return ok;
 }
 
-// Adds MAC/IP/mask/gateway from GetAdaptersAddresses to the pcap adapter list (matched by GUID).
-void addIpHelperInfo(std::vector<AdapterInfo>& list)
+// NDIS packet filter (ntddndis.h), set through Npcap like pcap_set_promisc() does internally.
+constexpr bpf_u_int32 kOidGenCurrentPacketFilter = 0x0001010E;
+constexpr ULONG kNdisPacketTypeDirected = 0x00000001;
+constexpr ULONG kNdisPacketTypeMulticast = 0x00000002;
+constexpr ULONG kNdisPacketTypeAllMulticast = 0x00000004;
+constexpr ULONG kNdisPacketTypeBroadcast = 0x00000008;
+
+// Receives every multicast frame without promiscuous mode. The NIC's multicast filter only passes
+// the groups the IP stack joined, so DCP Identify (01:0E:CF:00:00:00) is dropped otherwise (seen on
+// an Intel I219-LM). Npcap ORs this with the filters of the other users of the NIC. Best effort: if
+// the driver refuses it, DCP Identify needs --promisc as before.
+bool requestAllMulticast(pcap_t* p)
 {
-    ULONG size = 32 * 1024;
-    std::vector<uint8_t> buf;
-    ULONG rc = ERROR_BUFFER_OVERFLOW;
-    for (int tries = 0; tries < 3 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
-        buf.resize(size);
-        rc = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_DNS_SERVER, nullptr,
-                                  reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    }
-    if (rc != NO_ERROR)
-        return;
-    for (auto* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
-        std::string guid = lower(a->AdapterName ? a->AdapterName : "");
-        for (AdapterInfo& info : list) {
-            if (lower(info.name).find(guid) == std::string::npos || guid.empty())
-                continue;
-            info.friendlyName = narrow(a->FriendlyName);
-            if (a->PhysicalAddressLength == 6)
-                info.mac = MacAddress::fromBytes(a->PhysicalAddress);
-            for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
-                if (u->Address.lpSockaddr->sa_family != AF_INET)
-                    continue;
-                auto* sin = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr);
-                info.ipv4 = ntohl(sin->sin_addr.s_addr);
-                ULONG prefix = u->OnLinkPrefixLength;
-                info.netmask = prefix == 0 ? 0 : (prefix >= 32 ? 0xFFFFFFFFu : ~((1u << (32 - prefix)) - 1));
-                break;
-            }
-            for (auto* g = a->FirstGatewayAddress; g; g = g->Next) {
-                if (g->Address.lpSockaddr->sa_family != AF_INET)
-                    continue;
-                info.gateway = ntohl(reinterpret_cast<sockaddr_in*>(g->Address.lpSockaddr)->sin_addr.s_addr);
-                break;
-            }
-        }
-    }
+    ULONG f = kNdisPacketTypeDirected | kNdisPacketTypeMulticast | kNdisPacketTypeAllMulticast | kNdisPacketTypeBroadcast;
+    size_t len = sizeof f;
+    return pcap_oid_set_request(p, kOidGenCurrentPacketFilter, &f, &len) == 0;
 }
 
-pcap_t* openHandle(const std::string& name, bool promisc, const std::string& filter, std::string* error)
+pcap_t* openHandle(const std::string& name, bool promisc, bool allMulticast, const std::string& filter,
+                   std::string* error)
 {
     char errbuf[PCAP_ERRBUF_SIZE] = {};
     pcap_t* p = pcap_create(name.c_str(), errbuf);
@@ -130,6 +79,8 @@ pcap_t* openHandle(const std::string& name, bool promisc, const std::string& fil
         pcap_close(p);
         return nullptr;
     }
+    if (allMulticast && !promisc)
+        (void)requestAllMulticast(p);
     bpf_program prog{};
     if (pcap_compile(p, &prog, filter.c_str(), 1, PCAP_NETMASK_UNKNOWN) != 0 || pcap_setfilter(p, &prog) != 0) {
         if (error)
@@ -156,6 +107,7 @@ public:
     {
         rxEvent_ = pcap_getevent(rx_);
         interruptEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        haveLuid_ = win::luidFromGuidName(info_.name, luid_);
     }
 
     ~NpcapPort() override
@@ -207,8 +159,12 @@ public:
 
     const AdapterInfo& info() const override { return info_; }
 
+    LinkStatus link() const override { return haveLuid_ ? win::linkStatus(luid_) : LinkStatus{}; }
+
 private:
     AdapterInfo info_;
+    NET_LUID luid_{};
+    bool haveLuid_ = false;
     pcap_t* rx_;
     pcap_t* tx_;
     HANDLE rxEvent_ = nullptr;
@@ -218,7 +174,7 @@ private:
 
 } // namespace
 
-std::vector<AdapterInfo> listAdapters(std::string* error)
+std::vector<AdapterInfo> npcapListAdapters(std::string* error)
 {
     std::vector<AdapterInfo> list;
     if (!loadNpcap(error))
@@ -236,46 +192,20 @@ std::vector<AdapterInfo> listAdapters(std::string* error)
         AdapterInfo info;
         info.name = d->name ? d->name : "";
         info.description = d->description ? d->description : "";
+        info.backend = "npcap";
         list.push_back(info);
     }
     pcap_freealldevs(all);
-    addIpHelperInfo(list);
-    // Adapters without a MAC (WAN miniports, Bluetooth PAN...) cannot carry PROFINET.
-    list.erase(std::remove_if(list.begin(), list.end(), [](const AdapterInfo& a) { return a.mac.isZero(); }),
-               list.end());
+    win::addIpHelperInfo(list);
     return list;
 }
 
-std::unique_ptr<L2Port> openL2Port(const std::string& selector, const L2Options& options, std::string* error)
+std::unique_ptr<L2Port> npcapOpen(const AdapterInfo& adapter, const L2Options& options, std::string* error)
 {
-    std::vector<AdapterInfo> list = listAdapters(error);
-    if (list.empty()) {
-        if (error && error->empty())
-            *error = "no Ethernet adapter found";
-        return nullptr;
-    }
-    MacAddress mac;
-    uint32_t ip = 0;
-    const bool byMac = MacAddress::parse(selector, mac);
-    const bool byIp = parseIpv4(selector, ip);
-    const AdapterInfo* found = nullptr;
-    for (const AdapterInfo& a : list) {
-        if (a.name == selector || lower(a.friendlyName) == lower(selector) || (byMac && a.mac == mac) ||
-            (byIp && a.ipv4 == ip)) {
-            found = &a;
-            break;
-        }
-    }
-    if (!found) {
-        if (error)
-            *error = "adapter '" + selector + "' not found (pn_probe --list shows the names)";
-        return nullptr;
-    }
-
     // Never our own frames (Npcap loops TX back), then PROFINET (also VLAN-tagged) and LLDP.
     // The `vlan` keyword shifts the header offsets for everything after it in the expression,
     // so it must be the last term.
-    std::string filter = "not ether src " + found->mac.str() + " and (ether proto 0x8892 or ether proto 0x88cc";
+    std::string filter = "not ether src " + adapter.mac.str() + " and (ether proto 0x8892 or ether proto 0x88cc";
     if (options.extraEtherType != 0) {
         char t[8];
         t[0] = '0';
@@ -287,15 +217,15 @@ std::unique_ptr<L2Port> openL2Port(const std::string& selector, const L2Options&
     }
     filter += " or (vlan and ether proto 0x8892))";
 
-    pcap_t* rx = openHandle(found->name, options.promiscuous, filter, error);
+    pcap_t* rx = openHandle(adapter.name, options.promiscuous, true, filter, error);
     if (!rx)
         return nullptr;
-    pcap_t* tx = openHandle(found->name, false, "less 1", error); // TX only: capture nothing
+    pcap_t* tx = openHandle(adapter.name, false, false, "less 1", error); // TX only: capture nothing
     if (!tx) {
         pcap_close(rx);
         return nullptr;
     }
-    return std::make_unique<NpcapPort>(*found, rx, tx);
+    return std::make_unique<NpcapPort>(adapter, rx, tx);
 }
 
 } // namespace softpn

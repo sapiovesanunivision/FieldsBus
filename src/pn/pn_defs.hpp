@@ -12,6 +12,7 @@ namespace softpn {
 
 // ---- Ethernet ----------------------------------------------------------------------------------
 constexpr uint16_t kEtherTypeProfinet = 0x8892;
+constexpr uint16_t kUdpRtPort = 0x8892; // RT_CLASS_UDP port: CMInitiator/CMResponderUDPRTPort
 constexpr uint16_t kEtherTypeLldp = 0x88CC;
 constexpr uint16_t kEtherTypeVlan = 0x8100;
 constexpr uint16_t kEtherTypeLocalExperimental = 0x88B5; // pn_probe jitter frames, never PROFINET
@@ -20,8 +21,12 @@ constexpr size_t kMinFrameSize = 60;                     // without FCS
 constexpr size_t kMaxFrameSize = 1518;
 
 // ---- FrameID (first 2 bytes after the EtherType, big-endian) -----------------------------------
+// RT_CLASS_1 cyclic data: 0x8000-0xBFFF (current numbering, the CODESYS PN-Controller uses 0x8001) and
+// 0xC000-0xFBFF (legacy range, accepted for older controllers).
 constexpr uint16_t kFrameIdRtClass1First = 0x8000;
-constexpr uint16_t kFrameIdRtClass1Last = 0xBFFF;
+constexpr uint16_t kFrameIdRtClass1Last = 0xFBFF;
+constexpr uint16_t kFrameIdDeviceChooses = 0xFFFF; // output IOCR in a Connect: the device assigns the FrameID
+constexpr uint16_t kOurOutputFrameId = 0x8002;     // what softpn assigns then (RT_CLASS_1, current numbering)
 constexpr uint16_t kFrameIdAlarmHigh = 0xFC01;
 constexpr uint16_t kFrameIdAlarmLow = 0xFE01;
 constexpr uint16_t kFrameIdDcpHello = 0xFEFC;
@@ -94,7 +99,26 @@ constexpr unsigned kTxIntervalMs = 5000;
 constexpr uint16_t kTtlSeconds = 20;
 constexpr uint8_t kOuiProfinet[3] = {0x00, 0x0E, 0xCF};
 constexpr uint8_t kOuiIeee8023[3] = {0x00, 0x12, 0x0F};
+// Operational MAU types (IEEE 802.3 dot3MauType, the values of the GSDML MAUTypeList).
+constexpr uint16_t kMau10BaseTHd = 10;
+constexpr uint16_t kMau10BaseTFd = 11;
+constexpr uint16_t kMau100BaseTxHd = 15;
 constexpr uint16_t kMau100BaseTxFd = 16;
+constexpr uint16_t kMau1000BaseTHd = 29;
+constexpr uint16_t kMau1000BaseTFd = 30;
+// Auto-negotiation advertised capability (RFC 3636 bits, bit 0 = MSB): 10BASE-T HD/FD, 100BASE-TX HD/FD,
+// plus 1000BASE-T FD on a gigabit link.
+constexpr uint16_t kAutonegCap10_100 = 0x6C00;
+constexpr uint16_t kAutonegCap1000BaseTFd = 0x0001;
+
+// MAU type for a link speed; 0 = unknown speed (the caller keeps its default).
+constexpr uint16_t mauTypeFor(uint32_t speedMbps, bool fullDuplex)
+{
+    return speedMbps == 10     ? (fullDuplex ? kMau10BaseTFd : kMau10BaseTHd)
+           : speedMbps == 100  ? (fullDuplex ? kMau100BaseTxFd : kMau100BaseTxHd)
+           : speedMbps == 1000 ? (fullDuplex ? kMau1000BaseTFd : kMau1000BaseTHd)
+                               : uint16_t(0);
+}
 } // namespace lldp
 
 // ---- DCE/RPC (connectionless) ------------------------------------------------------------------

@@ -7,9 +7,12 @@
 //                          [--in-size 32] [--out-size 32] [--rr 8] [--seconds 5] [--local-port 34965]
 //                          [--device-port 34964] [--wrong-module 1] [--advanced 1] [--skip-release 1] [--vlan 0]
 //                          [--dhf 3]   data-hold factor: frames the device may miss before it aborts
+//                          [--backend auto|npcap|ndis]   Windows raw-Ethernet backend
 //
 // Run it on a second PC (or a second NIC cabled to the device NIC). On the same NIC as the device,
 // Npcap's loopback of sent frames may also work [verify]; RPC then goes over the local IP stack.
+#include "softeip/socket_compat.hpp" // first (winsock2.h before windows.h)
+
 #include "pn_controller.hpp"
 
 #include <chrono>
@@ -22,11 +25,15 @@ using namespace softpn;
 
 int main(int argc, char** argv)
 {
+    // WSAStartup for the RPC socket (so far the simulator ran on Linux or next to a device in the
+    // same process, which had already started Winsock).
+    softeip::SocketLibrary sockets;
     ControllerConfig cc;
     std::string adapter;
     std::string setNameMac;
     int seconds = 5;
     bool skipRelease = false;
+    L2Backend backend = L2Backend::Auto;
     for (int i = 1; i + 1 < argc; i += 2) {
         std::string k = argv[i];
         const char* v = argv[i + 1];
@@ -45,6 +52,12 @@ int main(int argc, char** argv)
         else if (k == "--vlan") cc.vlan = n != 0;
         else if (k == "--dhf") cc.dataHoldFactor = uint16_t(n);
         else if (k == "--skip-release") skipRelease = n != 0;
+        else if (k == "--backend") {
+            if (!parseL2Backend(v, backend)) {
+                std::fprintf(stderr, "--backend: auto, npcap or ndis\n");
+                return 2;
+            }
+        }
         else {
             std::fprintf(stderr, "unknown option %s\n", k.c_str());
             return 2;
@@ -56,6 +69,7 @@ int main(int argc, char** argv)
     }
     std::string err;
     L2Options opt;
+    opt.backend = backend;
     std::unique_ptr<L2Port> port = openL2Port(adapter, opt, &err);
     if (!port) {
         std::printf("%s\n", err.c_str());

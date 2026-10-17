@@ -33,7 +33,8 @@ namespace softpn {
 struct ControllerConfig {
     std::shared_ptr<L2Port> port;          // NIC or one end of makeMemoryCable()
     std::string deviceName = "softpn-device";
-    uint16_t localRpcPort = 34965;         // our RPC port (the device sends ApplicationReady there)
+    uint16_t localRpcPort = 34964;         // our RPC port (the device sends ApplicationReady there); another
+                                           // port only when the device runs on the same host
     uint16_t deviceRpcPort = 34964;
     uint16_t vendorId = 0xFFFF;
     uint16_t deviceId = 0x0001;

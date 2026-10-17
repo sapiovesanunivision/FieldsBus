@@ -142,6 +142,9 @@ struct Device::Impl {
                 LldpInfo li;
                 li.mac = port->info().mac;
                 li.stationName = dcp->station().name;
+                const LinkStatus ls = port->link(); // every 5 s: follows a renegotiated link speed
+                if (const uint16_t mau = lldp::mauTypeFor(ls.speedMbps, ls.fullDuplex))
+                    li.mauType = mau;
                 send(buildLldpFrame(li));
                 nextLldp = now + std::chrono::milliseconds(lldp::kTxIntervalMs);
             }
@@ -187,6 +190,7 @@ bool Device::start(std::string* error)
     } else {
         L2Options opt;
         opt.promiscuous = c.promiscuous;
+        opt.backend = c.l2Backend;
         std::unique_ptr<L2Port> p = openL2Port(c.adapter, opt, &err);
         if (!p)
             return fail(err);
@@ -238,6 +242,7 @@ bool Device::start(std::string* error)
     ac.minUpdateTimeMs = c.minUpdateTimeMs;
     ac.vlan = c.sendVlanTag;
     ac.rpcPort = c.rpcPort;
+    ac.controllerRpcPort = c.controllerRpcPort;
     ac.im0.orderId = c.orderId;
     ac.im0.serialNumber = c.serialNumber;
     ac.im0.hardwareRevision = c.hardwareRevision;
@@ -265,7 +270,9 @@ bool Device::start(std::string* error)
     d.rpc.setResponseHandler([&d](const RpcHeader& h, const std::vector<uint8_t>& body, const UdpAddress& from) {
         d.ar->handleResponse(h, body, from);
     });
-    if (!d.rpc.open(c.rpcPort, &err)) {
+    // Bound to the NIC's address: the replies leave through this NIC with this source IP even when the PC has
+    // another interface in the same subnet (e.g. a second NIC for the engineering tool).
+    if (!d.rpc.open(c.rpcPort, &err, nic.ipv4)) {
         d.port.reset();
         return fail(err);
     }

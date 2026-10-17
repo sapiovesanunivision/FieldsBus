@@ -36,6 +36,7 @@ Sections: NameOfStation rules, DCP codec, RPC header/NDR (both byte orders), PNI
 #include "pn_blocks.hpp"
 #include "pn_dcp.hpp"
 #include "pn_defs.hpp"
+#include "pn_lldp.hpp"
 #include "pn_model.hpp"
 #include "pn_rpc.hpp"
 
@@ -245,6 +246,30 @@ void testBlocks()
     CHECK(compareExpected(model, {wrongLen}).diff.size() == 1);
 }
 
+void testLldp()
+{
+    section("LLDP MAU type");
+    CHECK(lldp::mauTypeFor(1000, true) == 30 && lldp::mauTypeFor(100, true) == 16);
+    CHECK(lldp::mauTypeFor(100, false) == 15 && lldp::mauTypeFor(10, true) == 11);
+    CHECK(lldp::mauTypeFor(0, true) == 0 && lldp::mauTypeFor(2500, true) == 0); // unknown: keep the default
+
+    // IEEE 802.3 MAC/PHY TLV: OUI 00-12-0F, subtype 1, autoneg, advertised capability, MAU type.
+    auto macPhy = [](uint16_t mau) {
+        LldpInfo li;
+        MacAddress::parse("02:00:00:00:00:01", li.mac);
+        li.stationName = "dev";
+        li.mauType = mau;
+        const std::vector<uint8_t> f = buildLldpFrame(li);
+        const uint8_t key[4] = {0x00, 0x12, 0x0F, 0x01};
+        for (size_t i = 0; i + 9 <= f.size(); ++i)
+            if (std::memcmp(&f[i], key, 4) == 0)
+                return std::vector<uint8_t>(f.begin() + long(i) + 4, f.begin() + long(i) + 9);
+        return std::vector<uint8_t>{};
+    };
+    CHECK((macPhy(30) == std::vector<uint8_t>{0x03, 0x6C, 0x01, 0x00, 30}));
+    CHECK((macPhy(16) == std::vector<uint8_t>{0x03, 0x6C, 0x00, 0x00, 16}));
+}
+
 // ---- 2. GSDML ------------------------------------------------------------------------------------
 
 void testGsdml(const std::string& path)
@@ -310,6 +335,8 @@ bool makeRig(Rig& rig, ControllerConfig cc, const std::string& stationName, bool
     dc.inputSize = 32;
     dc.outputSize = 32;
     dc.raiseThreadPriority = false;
+    cc.localRpcPort = 34965; // device and controller share the loopback interface
+    dc.controllerRpcPort = cc.localRpcPort;
     auto self = std::make_shared<Device*>(nullptr); // outlives makeRig(): the callback runs later
     dc.onOutputs = [self](const std::vector<uint8_t>& out, bool) {
         if (*self)
@@ -488,6 +515,7 @@ int main(int argc, char** argv)
     testDcpCodec();
     testRpcCodec();
     testBlocks();
+    testLldp();
     testGsdml(gsdml);
     testHappyPath(verbose);
     testErrorPaths(verbose);

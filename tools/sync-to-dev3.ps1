@@ -4,18 +4,27 @@
 
 .DESCRIPTION
     GitHub FieldsBus is the master copy. Dev.3 builds SoftFieldbus145_x64(d).dll from a mirror of
-    include\softeip|softmb|softfb and src\*.cpp kept under Dev\Sdk\UvX. Never edit the mirror in
-    Dev.3: fix the code here, commit, then run this script and commit the result in Dev.3.
+    include\softeip|softmb|softfb|softpn, src\*.cpp and src\pn kept under Dev\Sdk\UvX. Never edit the
+    mirror in Dev.3: fix the code here, commit, then run this script and commit the result in Dev.3.
 
       include\softeip\*  ->  <Dev3Root>\Dev\Sdk\UvX\include\softeip\*
       include\softmb\*   ->  <Dev3Root>\Dev\Sdk\UvX\include\softmb\*
       include\softfb\*   ->  <Dev3Root>\Dev\Sdk\UvX\include\softfb\*
+      include\softpn\*   ->  <Dev3Root>\Dev\Sdk\UvX\include\softpn\*          (PROFINET public API)
       src\*.cpp          ->  <Dev3Root>\Dev\Sdk\UvX\sources\SoftFieldbus\src\*.cpp
+      src\pn\*           ->  <Dev3Root>\Dev\Sdk\UvX\sources\SoftFieldbus\src\pn\*  (PROFINET sources and
+                                                                                internal headers)
+      drivers\softpn_ndis\inc\*.h -> <Dev3Root>\Dev\Sdk\UvX\sources\SoftFieldbus\drivers\softpn_ndis\inc\*.h
+                                                                               (softpn_ndis driver interface)
+
+    The Dev.3 vcxproj must compile src\pn\l2_port_windows.cpp and l2_port_ndis.cpp (always) and
+    l2_port_npcap.cpp with SOFTPN_HAS_NPCAP=1 (only with the Npcap SDK), and add
+    drivers\softpn_ndis\inc to the include path (see Phase 9.19 / 9.20).
 
     - Copies the committed HEAD content (git archive), not the working tree.
     - Writes only files whose content changed; removes mirror files that no longer exist upstream
-      (only inside the four folders above). Dev.3-only files (vcxproj, rc, include\SoftFieldbus) are
-      never touched.
+      (only inside the folders above). Dev.3-only files (vcxproj, rc, include\SoftFieldbus) are
+      never touched. src\pn\l2_port_linux.cpp is mirrored too; the Windows vcxproj does not compile it.
     - Writes <Dev3Root>\Dev\Sdk\UvX\sources\SoftFieldbus\FIELDSBUS_SYNC.txt with the commit and a
       hash per file. Hashes ignore line endings (Dev.3 git may check files out with CRLF).
     - Stops if a mirror file was edited in Dev.3 since the last sync (hash differs from the stamp),
@@ -47,7 +56,12 @@ $mappings = @(
     @{ Src = 'include/softeip'; Dst = 'Dev\Sdk\UvX\include\softeip'; Filter = '*' },
     @{ Src = 'include/softmb';  Dst = 'Dev\Sdk\UvX\include\softmb';  Filter = '*' },
     @{ Src = 'include/softfb';  Dst = 'Dev\Sdk\UvX\include\softfb';  Filter = '*' },
-    @{ Src = 'src';             Dst = 'Dev\Sdk\UvX\sources\SoftFieldbus\src'; Filter = '*.cpp' }
+    @{ Src = 'include/softpn';  Dst = 'Dev\Sdk\UvX\include\softpn';  Filter = '*' },
+    @{ Src = 'src';             Dst = 'Dev\Sdk\UvX\sources\SoftFieldbus\src'; Filter = '*.cpp' },
+    @{ Src = 'src/pn';          Dst = 'Dev\Sdk\UvX\sources\SoftFieldbus\src\pn'; Filter = '*' },
+    # Interface of the softpn_ndis driver (l2_port_ndis.cpp includes it). Own folder: a shared
+    # destination would make the two mappings delete each other's files.
+    @{ Src = 'drivers/softpn_ndis/inc'; Dst = 'Dev\Sdk\UvX\sources\SoftFieldbus\drivers\softpn_ndis\inc'; Filter = '*.h' }
 )
 
 function Invoke-Git([string[]]$GitArgs) {

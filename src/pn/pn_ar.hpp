@@ -34,6 +34,7 @@ struct ArConfig {
     uint32_t minUpdateTimeMs = 8;
     bool vlan = true;
     uint16_t rpcPort = 34964;
+    uint16_t controllerRpcPort = 34964; // ApplicationReady target port
     Im0Data im0;
 };
 
@@ -80,6 +81,7 @@ private:
     std::vector<uint8_t> onWrite(const NdrArgs& args);
     std::vector<uint8_t> onRead(const NdrArgs& args, bool implicit);
     PnioStatus writeRecord(const RecordHeader& h, const uint8_t* data, size_t len);
+    void logRecord(const char* what, const RecordHeader& h, size_t len, const PnioStatus& st);
     PnioStatus validateConnect(const ConnectRequest& c) const;
     void sendApplicationReady();
     void setState(ArState s);

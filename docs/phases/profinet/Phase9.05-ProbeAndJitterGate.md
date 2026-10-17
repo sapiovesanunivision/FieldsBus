@@ -192,6 +192,7 @@ The tool. `--jitter` uses exactly the device's scheduling (Phase 9.13), so its n
 // pn_probe: Layer-2 diagnostics for the softpn PROFINET device (a mini "Proneta").
 //
 //   pn_probe --list                                        adapters with MAC and IPv4
+//   --backend auto|npcap|ndis (any mode)                   Windows raw-Ethernet backend (default auto)
 //   pn_probe --adapter A --jitter [--period-ms 8] [--seconds 60] [--dst MAC]
 //            sends 0x88B5 test frames every period and reports the achieved TX period
 //            (min/avg/max/p99 and a histogram): Gate A of the PROFINET PoC.
@@ -394,6 +395,7 @@ int main(int argc, char** argv)
     std::string dstText = "02:00:5e:00:88:b5"; // locally administered, nobody owns it
     int seconds = 60;
     bool temporary = false;
+    L2Backend backend = L2Backend::Auto;
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -408,7 +410,12 @@ int main(int argc, char** argv)
             arg1 = next();
         } else if (k == "--adapter")
             adapter = next();
-        else if (k == "--name")
+        else if (k == "--backend") {
+            if (!parseL2Backend(next(), backend)) {
+                std::fprintf(stderr, "--backend: auto, npcap or ndis\n");
+                return 2;
+            }
+        } else if (k == "--name")
             name = next();
         else if (k == "--dst")
             dstText = next();
@@ -426,12 +433,13 @@ int main(int argc, char** argv)
 
     std::string err;
     if (mode == "--list" || mode.empty()) {
-        std::vector<AdapterInfo> list = listAdapters(&err);
+        std::vector<AdapterInfo> list = listAdapters(backend, &err);
         if (list.empty())
             std::printf("%s\n", err.empty() ? "no adapters" : err.c_str());
         for (const AdapterInfo& a : list)
-            std::printf("%-22s %s  %-15s  %s\n    %s\n", a.friendlyName.c_str(), a.mac.str().c_str(),
-                        a.ipv4 ? ipToString(a.ipv4).c_str() : "no IPv4", a.description.c_str(), a.name.c_str());
+            std::printf("%-22s %s  %-15s  %s\n    %s  [%s]\n", a.friendlyName.c_str(), a.mac.str().c_str(),
+                        a.ipv4 ? ipToString(a.ipv4).c_str() : "no IPv4", a.description.c_str(), a.name.c_str(),
+                        a.backend.c_str());
         return list.empty() ? 1 : 0;
     }
     if (adapter.empty()) {
@@ -440,6 +448,7 @@ int main(int argc, char** argv)
     }
     L2Options opt;
     opt.extraEtherType = kEtherTypeLocalExperimental;
+    opt.backend = backend;
     std::unique_ptr<L2Port> port = openL2Port(adapter, opt, &err);
     if (!port) {
         std::printf("%s\n", err.c_str());

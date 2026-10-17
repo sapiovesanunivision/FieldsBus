@@ -3,3 +3,8 @@ out/
 .vs/
 CMakeSettings.json
 *.user
+
+# WDK NuGet packages and driver build output (drivers/softpn_ndis)
+drivers/softpn_ndis/packages/
+drivers/softpn_ndis/**/x64/
+drivers/softpn_ndis/**/ARM64/

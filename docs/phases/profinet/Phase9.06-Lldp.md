@@ -37,7 +37,7 @@ struct LldpInfo {
     MacAddress mac;            // interface MAC (also used as ChassisMAC and port MAC on a 1-port PC NIC)
     std::string stationName;   // ChassisID; empty -> the MAC is used
     std::string portId = "port-001";
-    uint16_t mauType = 16;     // 100BASE-TX full duplex
+    uint16_t mauType = 16;     // operational MAU type; 16 = 100BASE-TX full duplex (used when the speed is unknown)
 };
 
 // Complete LLDP Ethernet frame to 01:80:C2:00:00:0E.
@@ -113,10 +113,12 @@ std::vector<uint8_t> buildLldpFrame(const LldpInfo& info)
     tlv(w, 127, orgTlv(lldp::kOuiProfinet, 2, {0, 0, 0, 0}));
     // PROFINET: LLDP_PNIO_CHASSIS_MAC.
     tlv(w, 127, orgTlv(lldp::kOuiProfinet, 5, std::vector<uint8_t>(info.mac.b.begin(), info.mac.b.end())));
-    // IEEE 802.3 MAC/PHY configuration: autoneg supported+enabled, advertised 10/100 HD/FD [verify],
-    // operational MAU type.
+    // IEEE 802.3 MAC/PHY configuration: autoneg supported+enabled, advertised 10/100 HD/FD (and
+    // 1000BASE-T FD on a gigabit link), operational MAU type.
+    const uint16_t cap = uint16_t(lldp::kAutonegCap10_100 |
+                                  (info.mauType == lldp::kMau1000BaseTFd ? lldp::kAutonegCap1000BaseTFd : 0));
     tlv(w, 127, orgTlv(lldp::kOuiIeee8023, 1,
-                       {0x03, 0x6C, 0x00, uint8_t(info.mauType >> 8), uint8_t(info.mauType)}));
+                       {0x03, uint8_t(cap >> 8), uint8_t(cap), uint8_t(info.mauType >> 8), uint8_t(info.mauType)}));
     tlv(w, 0, {}); // End of LLDPDU
 
     std::vector<uint8_t> f = std::move(w.data());

@@ -1,0 +1,8 @@
+<Project>
+<!-- Spectre-mitigated libraries are not installed for VS 2022 v143 on this PC: Debug builds without them
+     (the sample projects set SpectreMitigation themselves, so this must come after the project body).
+     Release needs them: VS Installer, Individual components, "MSVC v143 ... Spectre-mitigated libs". -->
+<PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+  <SpectreMitigation>false</SpectreMitigation>
+</PropertyGroup>
+</Project>

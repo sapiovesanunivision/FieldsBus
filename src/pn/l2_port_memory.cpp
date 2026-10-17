@@ -81,7 +81,9 @@ std::pair<std::unique_ptr<L2Port>, std::unique_ptr<L2Port>> makeMemoryCable(cons
 {
     auto aToB = std::make_shared<Pipe>();
     auto bToA = std::make_shared<Pipe>();
-    return {std::make_unique<MemoryPort>(a, bToA, aToB), std::make_unique<MemoryPort>(b, aToB, bToA)};
+    AdapterInfo ia = a, ib = b;
+    ia.backend = ib.backend = "memory";
+    return {std::make_unique<MemoryPort>(ia, bToA, aToB), std::make_unique<MemoryPort>(ib, aToB, bToA)};
 }
 
 } // namespace softpn

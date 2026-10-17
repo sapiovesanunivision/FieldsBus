@@ -14,7 +14,7 @@
 -->
 <ISO15745Profile xmlns="http://www.profibus.com/GSDML/2003/11/DeviceProfile"
                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xsi:schemaLocation="http://www.profibus.com/GSDML/2003/11/DeviceProfile ../xsd/GSDML-DeviceProfile-V2.43.xsd">
+                 xsi:schemaLocation="http://www.profibus.com/GSDML/2003/11/DeviceProfile ..\xsd\GSDML-DeviceProfile-V2.43.xsd">
   <ProfileHeader>
     <ProfileIdentification>PROFINET Device Profile</ProfileIdentification>
     <ProfileRevision>1.00</ProfileRevision>
@@ -38,11 +38,12 @@
     <ApplicationProcess>
       <DeviceAccessPointList>
         <DeviceAccessPointItem ID="DAP1" PhysicalSlots="0..2" ModuleIdentNumber="0x00000001"
-                               MinDeviceInterval="32" ImplementationType="Software"
+                               MinDeviceInterval="256" ImplementationType="Software"
                                DNS_CompatibleName="softpn-device" FixedInSlots="0" ObjectUUID_LocalIndex="1"
                                RequiredSchemaVersion="V2.4" MultipleWriteSupported="true"
-                               PNIO_Version="V2.43" NumberOfDeviceAccessAR="1" DeviceAccessSupported="false"
-                               CheckDeviceID_Allowed="true" LLDP_NoD_Supported="true" ResetToFactoryModes="2">
+                               PNIO_Version="V2.43" DeviceAccessSupported="false"
+                               CheckDeviceID_Allowed="true" LLDP_NoD_Supported="true" ResetToFactoryModes="2"
+                               NameOfStationNotTransferable="false">
           <ModuleInfo>
             <Name TextId="T_DAP_Name"/>
             <InfoText TextId="T_DAP_Info"/>
@@ -78,15 +79,20 @@
           <SystemDefinedSubmoduleList>
             <InterfaceSubmoduleItem ID="IF1" SubslotNumber="32768" SubmoduleIdentNumber="0x00008000"
                                     TextId="T_Interface" SupportedRT_Classes="RT_CLASS_1"
-                                    SupportedProtocols="LLDP" DCP_HelloSupported="false">
+                                    SupportedProtocols="LLDP" DCP_HelloSupported="false"
+                                    PTP_BoundarySupported="true" DCP_BoundarySupported="true">
               <ApplicationRelations StartupMode="Advanced;Legacy">
-                <TimingProperties SendClock="32" ReductionRatio="8 16 32 64 128 256 512"/>
+                <!-- ReductionRatio: RT_CLASS_1 needs the full list 1..512 (TIA refuses a shortened list,
+                     check 0x00010030_4) and it must be explicit (check 0x00020020_16: 32 x 8 = MinDeviceInterval).
+                     Update times below 8 ms are excluded by MinDeviceInterval="256". -->
+                <TimingProperties SendClock="32" ReductionRatio="1 2 4 8 16 32 64 128 256 512"/>
               </ApplicationRelations>
             </InterfaceSubmoduleItem>
             <PortSubmoduleItem ID="PORT1" SubslotNumber="32769" SubmoduleIdentNumber="0x00008001"
                                TextId="T_Port1" MaxPortRxDelay="350" MaxPortTxDelay="160">
               <MAUTypeList>
                 <MAUTypeItem Value="16"/>
+                <MAUTypeItem Value="30"/>
               </MAUTypeList>
             </PortSubmoduleItem>
           </SystemDefinedSubmoduleList>

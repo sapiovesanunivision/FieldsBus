@@ -440,9 +440,11 @@ std::unique_ptr<L2Port> openL2Port(const std::string& selector, std::string* err
 - DeviceIdentity: VendorID = the **placeholder 0xFFFF** (must equal `DeviceConfig::vendorId`), DeviceID 0x0001, InfoText, VendorName "Univision".
 - DeviceFunction: Family MainFamily "I/O", ProductFamily "SoftPN".
 - **DeviceAccessPointItem "DAP1":**
-  - PhysicalSlots "0..2", ModuleIdentNumber 0x00000001, MinDeviceInterval 32, ImplementationType "Software",
+  - PhysicalSlots "0..2", ModuleIdentNumber 0x00000001, MinDeviceInterval 256 (8 ms, = minUpdateTimeMs), ImplementationType "Software",
     DNS_CompatibleName "softpn-device", FixedInSlots 0, ObjectUUID_LocalIndex 1, RequiredSchemaVersion "V2.43", PNIO_Version "V2.43",
-    ConformanceClass "A", NumberOfDeviceAccessAR 1, DeviceAccessSupported false.
+    ConformanceClass "A", DeviceAccessSupported false (no NumberOfDeviceAccessAR: TIA refuses it then),
+    NameOfStationNotTransferable false; interface: PTP_BoundarySupported and DCP_BoundarySupported true
+    (required for PNIO_Version >= V2.31; boundary writes to slot 0 are accepted and ignored). Checked by TIA Portal 2026-10-16.
   - ModuleInfo: Name, OrderNumber "SOFTPN-1", HardwareRelease, SoftwareRelease.
   - IOConfigData MaxInputLength/MaxOutputLength 1440.
   - UseableModules: input modules AllowedInSlots "1", output modules AllowedInSlots "2".

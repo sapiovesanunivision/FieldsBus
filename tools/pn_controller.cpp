@@ -237,7 +237,7 @@ std::vector<uint8_t> ControllerSim::buildConnect(const Uuid& arUuid, uint16_t se
     ar.cmInitiatorObjectUuid = pnioDeviceObject(1, 0x0002, 0x0001); // any object UUID of ours
     ar.arProperties = 0x00000001 | (cfg_.advancedStartup ? kArPropStartupAdvanced : 0);
     ar.activityTimeoutFactor = 100; // 10 s
-    ar.cmInitiatorUdpPort = cfg_.localRpcPort;
+    ar.cmInitiatorUdpPort = 0x8892; // RT_CLASS_UDP port as sent by real controllers, not our RPC port
     ar.cmInitiatorStationName = "softpn-controller-sim";
     writeArBlockReq(w, ar);
 

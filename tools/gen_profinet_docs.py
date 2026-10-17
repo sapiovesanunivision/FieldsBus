@@ -175,7 +175,7 @@ phase('9.02', 'L2PortNpcap', 'Npcap backend (Windows)',
        '[GetAdaptersAddresses](https://learn.microsoft.com/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses)'],
       [
           F('src/pn/l2_port_npcap.cpp',
-            'Implements `listAdapters()` and `openL2Port()` with Npcap. The adapter can be selected by the Npcap '
+            'The Npcap backend (`npcapListAdapters()`, `npcapOpen()`). The adapter can be selected by the Npcap '
             'name, the Windows friendly name ("Ethernet 2"), the MAC or the IPv4 address.',
             ['**Delay-loaded `wpcap.dll`**: loaded by full path from `System32\\Npcap` before the first call, so a '
              'PC without Npcap gets a clear error instead of a crash, and old `wpcap.dll` copies elsewhere are ignored.',
@@ -184,7 +184,10 @@ phase('9.02', 'L2PortNpcap', 'Npcap backend (Windows)',
              '**Filter order matters**: libpcap\'s `vlan` keyword shifts the offsets of every term after it, so it is '
              'the last term (`not ether src <own MAC> and (... or (vlan and ether proto 0x8892))`). With `vlan` in '
              'the middle, any EtherType test after it silently never matched - found with the Phase 9.05 probe.',
-             '**Own frames**: Npcap loops transmitted frames back to other handles; the filter drops them.']),
+             '**Own frames**: Npcap loops transmitted frames back to other handles; the filter drops them.'],
+            note='Code below is the current file: since Phase 9.20 it is one of two Windows backends; the public '
+                 '`listAdapters()` / `openL2Port()` and the IP Helper code moved to `l2_port_windows.cpp`. The CMake '
+                 'block of the next step is replaced in Phase 9.20.'),
           S('CMakeLists.txt', 'Compile and link the Npcap backend',
             'Inside `if(SOFTPN_ENABLED)`: append the platform backend after `set(SOFTPN_SOURCES ...)`, and add the '
             'Windows link settings after `softeip_warnings(softpn)`.',
@@ -822,6 +825,442 @@ phase('9.18', 'CodesysBringUp', 'Windows setup and CODESYS bring-up (Gates C and
        'All `[verify]` items resolved and the docs updated', 'Results page updated'])
 
 
+D3 = 'Dev/Applicazioni/ProInspect/ProVision/Sources/UvpProcessImage/ProInspectProcessImageSoftFieldbusService'
+D3INST = 'Dev/Applicazioni/ProInspect/ProVision/Sources/Installatori/ProInspectProcessImageSoftFieldbusService/Source'
+
+phase('9.19', 'Dev3ProcessImageService', 'Dev.3: PROFINET in ProInspectProcessImageSoftFieldbusService',
+      'Give the ProInspect process-image service a `Transport=profinet` option, so a PROFINET PLC exchanges the same '
+      '112 / 252 bytes as with the Hilscher card, EtherNet/IP or Modbus: library sync, DLL project, service settings, '
+      '`.reg` files, GSDML folder, installer and README. **Status: prepared, not applied** - Dev.3 is busy with other '
+      'work; apply on a new `dev/<story>/<task>` branch when it is free. Paths below are relative to the Dev.3 root.',
+      ['[Phase 8 Dev.3 integration](../phase-8-dev3.md)', '[dev3-integration.md](../../dev3-integration.md)',
+       '[Test runbook, section 5](../../profinet-test-runbook.md#5-optional-the-process-image-service)'],
+      [
+          T('Before you start', 'The Dev.3 commit must reference a FieldsBus commit that exists on GitHub.',
+            '''
+            - FieldsBus: commit the PoC (`feature/profinet-poc`), merge or push it, so `FIELDSBUS_SYNC.txt` points at a
+              pushed commit (the sync warns otherwise).
+            - Dev.3: new branch `dev/<story>/<task>_SoftFieldbusProfinet` from the commit that contains PR 306
+              (SoftFieldbus); Dev.3 branches must follow `dev/<story>/<task>` (pre-push hook).
+            - Every PC that builds Dev.3 with PROFINET (and the build server) needs the **Npcap SDK** and the `NPCAP_SDK`
+              environment variable. Without it the DLL still builds, without PROFINET (next steps).
+            - Design decisions: modules **Output 128 bytes** (PLC -> PC, carries the 112) and **Input 256 bytes**
+              (PC -> PLC, carries the 252) from the existing GSDML, the rest is zero padding; byte order **none** by
+              default (raw, as the Hilscher service), `swap` available; NIC = `Parameters\\profinet\\Adapter`, or
+              `BindAddress` when empty.
+            '''),
+          T('Sync the library into Dev\\Sdk\\UvX', '`tools/sync-to-dev3.ps1` now also mirrors `include/softpn` and `src/pn`.',
+            '''
+            ```powershell
+            pwsh D:\\Univision\\Misc\\FieldsBus\\tools\\sync-to-dev3.ps1 -Dev3Root D:\\Univision\\Dev.3 -WhatIf   # preview
+            pwsh D:\\Univision\\Misc\\FieldsBus\\tools\\sync-to-dev3.ps1 -Dev3Root D:\\Univision\\Dev.3
+            ```
+            Expected (from e634dd4): **28 added** (`include\\softpn\\*`, `sources\\SoftFieldbus\\src\\pn\\*`) and **5 changed**
+            (`bytes.hpp`, `export.hpp`, `periodic_timer.hpp`, `fieldbus_device.hpp`, `fieldbus_device.cpp`). The script
+            warns that source files were added: that is the next step. Commit message: `Sync FieldsBus <hash>`.
+            '''),
+          S('Dev/Sdk/UvX/sources/SoftFieldbus/SoftFieldbus1x.vcxproj', 'DLL project: PROFINET when the Npcap SDK is present',
+            'Insert **before** `<Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />`. The block applies to all four '
+            'configurations and only when `NPCAP_SDK` points to an SDK, so builds without it are unchanged. Add the same '
+            'files under a "pn" filter in `SoftFieldbus1x.vcxproj.filters`. `src\\pn\\l2_port_linux.cpp` is mirrored but not compiled.',
+            r'''
+            <!-- PROFINET (softpn): only with the Npcap SDK (environment variable NPCAP_SDK), as in FieldsBus CMake.
+                 Without it the DLL builds as before; Transport=profinet then reports "no PROFINET support". -->
+            <PropertyGroup>
+              <SoftFieldbusProfinet Condition="'$(NPCAP_SDK)' != '' and Exists('$(NPCAP_SDK)\Include\pcap.h')">true</SoftFieldbusProfinet>
+            </PropertyGroup>
+            <ItemGroup Condition="'$(SoftFieldbusProfinet)' == 'true'">
+              <ClCompile Include="src\pn\l2_port_memory.cpp" />
+              <ClCompile Include="src\pn\l2_port_npcap.cpp" />
+              <ClCompile Include="src\pn\pn_ar.cpp" />
+              <ClCompile Include="src\pn\pn_blocks.cpp" />
+              <ClCompile Include="src\pn\pn_cyclic.cpp" />
+              <ClCompile Include="src\pn\pn_dcp.cpp" />
+              <ClCompile Include="src\pn\pn_device.cpp" />
+              <ClCompile Include="src\pn\pn_frame.cpp" />
+              <ClCompile Include="src\pn\pn_lldp.cpp" />
+              <ClCompile Include="src\pn\pn_model.cpp" />
+              <ClCompile Include="src\pn\pn_rpc.cpp" />
+              <ClCompile Include="src\pn\pn_rta.cpp" />
+              <ClCompile Include="src\pn\pn_station_store.cpp" />
+              <ClInclude Include="..\..\include\softpn\l2_port.hpp" />
+              <ClInclude Include="..\..\include\softpn\pn_device.hpp" />
+              <ClInclude Include="src\pn\pn_ar.hpp" />
+              <ClInclude Include="src\pn\pn_blocks.hpp" />
+              <ClInclude Include="src\pn\pn_cyclic.hpp" />
+              <ClInclude Include="src\pn\pn_dcp.hpp" />
+              <ClInclude Include="src\pn\pn_defs.hpp" />
+              <ClInclude Include="src\pn\pn_frame.hpp" />
+              <ClInclude Include="src\pn\pn_lldp.hpp" />
+              <ClInclude Include="src\pn\pn_model.hpp" />
+              <ClInclude Include="src\pn\pn_rpc.hpp" />
+              <ClInclude Include="src\pn\pn_rta.hpp" />
+              <ClInclude Include="src\pn\pn_station_store.hpp" />
+              <ClInclude Include="src\pn\pn_uuid.hpp" />
+            </ItemGroup>
+            <ItemDefinitionGroup Condition="'$(SoftFieldbusProfinet)' == 'true'">
+              <ClCompile>
+                <AdditionalIncludeDirectories>$(NPCAP_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+                <PreprocessorDefinitions>SOFTFB_HAS_PROFINET=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+              </ClCompile>
+              <Link>
+                <AdditionalDependencies>$(NPCAP_SDK)\Lib\x64\wpcap.lib;iphlpapi.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+                <!-- loaded on first use from System32\Npcap: a PC without Npcap gets an error message, not a crash -->
+                <DelayLoadDLLs>wpcap.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+              </Link>
+            </ItemDefinitionGroup>
+            ''',
+            ['**Consumers need no define**: `fieldbus_device.hpp` always declares `Transport::ProfinetRt` and '
+             '`DeviceConfig::profinet`; only the DLL needs `SOFTFB_HAS_PROFINET`.',
+             '**Update the header comment** of the vcxproj: the mirror now includes `include\\softpn` and `src\\pn`.'],
+            lang='xml'),
+          S(D3 + '/ProInspectProcessImageSoftFieldbusClient.h', 'Service settings: Parameters\\profinet',
+            'Add these members at the end of `struct SoftFieldbusServiceConfig` (and `| profinet` to the `transport` comment).',
+            '''
+            	std::string profinetAdapter;                                   //!< profinet\\Adapter: NIC (friendly name, MAC or IP);
+            	                                                               //!< "" = use BindAddress (the NIC's IP)
+            	std::string profinetStationName = "proinspect";                //!< profinet\\StationName: default NameOfStation
+            	std::string profinetPersistPath;                               //!< profinet\\PersistPath: NameOfStation set by the PLC;
+            	                                                               //!< "" = %ProgramData%\\Univision\\<service>\\softpn.ini
+            	int profinetVendorId = 65535;                                  //!< profinet\\VendorId } must match
+            	int profinetDeviceId = 1;                                      //!< profinet\\DeviceId } GSDML\\*.xml
+            	int profinetMinUpdateTimeMs = 8;                               //!< profinet\\MinUpdateTimeMs: faster Connects are refused
+            	bool profinetSendVlanTag = true;                               //!< profinet\\SendVlanTag
+            	bool profinetPromiscuous = false;                              //!< profinet\\Promiscuous: 1 if the PLC cannot find the PC
+            	bool profinetByteSwap = false;                                 //!< profinet\\ByteOrder: none (default, raw as the
+            	                                                               //!< Hilscher card) | swap (as modbus\\ByteOrder)
+            ''',
+            ['**Defaults in one place**: the struct defaults are used when a value is missing in the registry.'],
+            lang='cpp'),
+          S(D3 + '/ProInspectProcessImageSoftFieldbusService.cpp', 'Read Parameters\\profinet in OnInit()',
+            'After the `Parameters\\modbus` block in `OnInit()`; extend the layout comment above `OnInit()` and the '
+            'warning text of the `Transport` value with `profinet`. In `overrideTransport()`, route the byte order to '
+            'PROFINET when that transport is selected.',
+            '''
+            		if (RegOpenKeyExW(hkey, L"profinet", 0, KEY_QUERY_VALUE, &sub) == ERROR_SUCCESS)
+            		{
+            			if (readString(sub, L"Adapter", s))
+            				config_.profinetAdapter = s;
+            			if (readString(sub, L"StationName", s) && !s.empty())
+            				config_.profinetStationName = s;
+            			if (readString(sub, L"PersistPath", s))
+            				config_.profinetPersistPath = s;
+            			if (readDword(sub, L"VendorId", v))
+            				config_.profinetVendorId = v;
+            			if (readDword(sub, L"DeviceId", v))
+            				config_.profinetDeviceId = v;
+            			if (readDword(sub, L"MinUpdateTimeMs", v) && v > 0)
+            				config_.profinetMinUpdateTimeMs = v;
+            			if (readDword(sub, L"SendVlanTag", v))
+            				config_.profinetSendVlanTag = v != 0;
+            			if (readDword(sub, L"Promiscuous", v))
+            				config_.profinetPromiscuous = v != 0;
+            			if (readString(sub, L"ByteOrder", s))
+            				config_.profinetByteSwap = _stricmp(s.c_str(), "swap") == 0;
+            			RegCloseKey(sub);
+            		}
+
+            // overrideTransport(): replace the byte-order part with
+            	bool* swap = config_.transport == softfb::Transport::ProfinetRt ? &config_.profinetByteSwap : &config_.modbusByteSwap;
+            	if (_stricmp(byteOrder.c_str(), "none") == 0)
+            		*swap = false;
+            	else if (_stricmp(byteOrder.c_str(), "swap") == 0)
+            		*swap = true;
+            	else if (!byteOrder.empty())
+            		return false;
+            ''',
+            ['**`readString` buffer** is 256 characters: enough for adapter names and paths under ProgramData.'],
+            lang='cpp'),
+          S(D3 + '/ProInspectProcessImageSoftFieldbusClient.cpp', 'Start the PROFINET device in open()',
+            'In `open()`, replace the two size lines and add the PROFINET settings before `dc.onLog`; add the helper to '
+            'the anonymous namespace; change the byte-swap rule in `onInputOutputUpdate()`; log the real sizes.',
+            '''
+            // anonymous namespace: default file for the NameOfStation the PLC assigns over DCP
+            std::string defaultPersistPath()
+            {
+            	char base[MAX_PATH] = {};
+            	if (GetEnvironmentVariableA("ProgramData", base, MAX_PATH) == 0)
+            		return "softpn.ini";
+            	std::string dir = std::string(base) + "\\\\Univision";
+            	CreateDirectoryA(dir.c_str(), NULL); // fails harmlessly if it exists
+            	dir += "\\\\ProInspectProcessImageSoftFieldbusService";
+            	CreateDirectoryA(dir.c_str(), NULL);
+            	return dir + "\\\\softpn.ini";
+            }
+
+            // file scope: the PROFINET modules (GSDML) are 128 / 256 bytes and carry the wire structs plus zero padding
+            static_assert(sizeof(HilscherProcessImageInputData) <= 128, "PLC -> PC data must fit the 'Output 128 bytes' module");
+            static_assert(sizeof(HilscherProcessImageOutputData) <= 256, "PC -> PLC data must fit the 'Input 256 bytes' module");
+
+            // open(): sizes
+            	const bool profinet = config_.transport == softfb::Transport::ProfinetRt;
+            	dc.inputSize = profinet ? 128 : sizeof(HilscherProcessImageInputData);   // PLC -> PC
+            	dc.outputSize = profinet ? 256 : sizeof(HilscherProcessImageOutputData); // PC -> PLC
+
+            // open(): before dc.onLog
+            	dc.profinet.adapter = !config_.profinetAdapter.empty() ? config_.profinetAdapter : config_.bindAddress;
+            	dc.profinet.stationName = config_.profinetStationName;
+            	dc.profinet.persistPath = !config_.profinetPersistPath.empty() ? config_.profinetPersistPath : defaultPersistPath();
+            	dc.profinet.vendorId = uint16_t(config_.profinetVendorId);
+            	dc.profinet.deviceId = uint16_t(config_.profinetDeviceId);
+            	dc.profinet.minUpdateTimeMs = uint32_t(config_.profinetMinUpdateTimeMs);
+            	dc.profinet.sendVlanTag = config_.profinetSendVlanTag;
+            	dc.profinet.promiscuous = config_.profinetPromiscuous;
+            	if (profinet && (dc.profinet.adapter.empty() || dc.profinet.adapter == "0.0.0.0"))
+            	{
+            		setError(1, "PROFINET needs a network card: set Parameters\\\\profinet\\\\Adapter or BindAddress to the PLC NIC");
+            		return OperationResult(1, Uvc::String(_T("SoftFieldbus PROFINET: no network card configured")));
+            	}
+
+            // open(): the "started" message prints dc.inputSize / dc.outputSize instead of sizeof(...)
+
+            // onInputOutputUpdate(): byte order
+            	const bool swap = config_.transport == softfb::Transport::ProfinetRt
+            						  ? config_.profinetByteSwap
+            						  : (config_.modbusByteSwap && config_.transport != softfb::Transport::EtherNetIP);
+            ''',
+            ['**ioRead/ioWrite stay 112 / 252 bytes at offset 0**: the padding bytes are never written, so they stay zero.',
+             '**Without the fix**, the old rule `transport != EtherNetIP` would apply the Modbus swap to PROFINET.',
+             '**ProgramData**: the service runs as `.\\ProInspect`; `C:\\Windows\\System32` (its working folder) is not writable.'],
+            lang='cpp'),
+          S(D3 + '/ProInspectProcessImageSoftFieldbusServiceMain.cpp', 'Command line help',
+            'Add `profinet` to the transport lists (file header, the "unknown transport" message and the usage line). '
+            '`-process profinet 0 swap` sets the PROFINET byte order (the port is ignored for PROFINET).',
+            '''
+            	wprintf(L" -process [transport [port [swap|none]]]	to run the service as process (transport: eip, modbus-tcp, modbus-udp, modbus, profinet).\\n");
+            ''', ['**No new options**: everything else comes from the registry.'], lang='cpp'),
+          T('Registry files', 'One `.reg` per transport, each writing the whole tree.',
+            '''
+            - New `Registry\\ProInspectProcessImageSoftFieldbusService_profinet.reg` (copy of `_eip.reg`, `"Transport"="profinet"`,
+              `"BindAddress"` = the PLC NIC's IP).
+            - Add the `Parameters\\profinet` key to **all four** files, so any import switches transport cleanly.
+            - Save as **UTF-16 LE with BOM** like the existing files (`regedit` shows an error for UTF-8 files with non-ASCII text).
+
+            ```reg
+            [HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\ProInspectProcessImageSoftFieldbusService\\Parameters\\profinet]
+            ; NIC facing the PLC: friendly name ("Ethernet 2"), MAC or IP; empty = BindAddress
+            "Adapter"=""
+            ; default NameOfStation; the PLC can assign another one over DCP (kept in PersistPath)
+            "StationName"="proinspect"
+            ; empty = %ProgramData%\\Univision\\ProInspectProcessImageSoftFieldbusService\\softpn.ini
+            "PersistPath"=""
+            ; identity: must match GSDML\\GSDML-V2.43-Univision-SoftPN-*.xml (0xFFFF = placeholder until a PI vendor ID exists)
+            "VendorId"=dword:0000ffff
+            "DeviceId"=dword:00000001
+            ; fastest update time accepted, ms
+            "MinUpdateTimeMs"=dword:00000008
+            "SendVlanTag"=dword:00000001
+            ; 1 only if the PLC cannot find the PC (some NICs drop the DCP multicast)
+            "Promiscuous"=dword:00000000
+            ; none = structs as in PC memory (as the Hilscher card); swap = WORD/DWORD/float big-endian
+            "ByteOrder"="none"
+            ```
+            '''),
+          T('GSDML folder', 'The PROFINET counterpart of the `EDS` folder.',
+            '''
+            - `GSDML\\GSDML-V2.43-Univision-SoftPN-20261013.xml`: copy of FieldsBus `gsdml/` (keep it in sync by hand when the
+              GSDML changes).
+            - `GSDML\\README.md`: import the file into the engineering tool; device "SoftPN device"; **slot 1 = "Input 256 bytes
+              (PC to PLC)"**, **slot 2 = "Output 128 bytes (PLC to PC)"**; the first 252 / 112 bytes have the same layout
+              and offsets as the EtherNet/IP assemblies (README "PLC side"), the rest is zero; NameOfStation =
+              `StationName`, IP = the PC's NIC IP; update time 8 ms or more; byte order as `ByteOrder`.
+            '''),
+          T('Installer (Inno Setup)', '`' + D3INST + '/ProInspectProcessImagesSoftFieldbusService.iss`',
+            '''
+            ```ini
+            [Tasks]
+            Name: "transport\\profinet"; Description: "PROFINET IO-Device (needs Npcap; modules Input 256 / Output 128 bytes)"; Flags: exclusive unchecked
+
+            [Files]
+            Source: "..\\..\\UvpProcessImage\\ProInspectProcessImageSoftFieldbusService\\GSDML\\*.xml"; DestDir: "{#UV_SYSTEM_DIR}\\GSDML"; Flags: ignoreversion
+            Source: "..\\..\\UvpProcessImage\\ProInspectProcessImageSoftFieldbusService\\GSDML\\README.md"; DestDir: "{#UV_SYSTEM_DIR}\\GSDML"; Flags: ignoreversion
+
+            [Registry]
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}"; ValueType: string; ValueName: "Transport"; ValueData: "profinet"; Flags: uninsdeletekey; Tasks: transport\\profinet
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: string; ValueName: "Adapter"; ValueData: ""; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: string; ValueName: "StationName"; ValueData: "proinspect"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: string; ValueName: "PersistPath"; ValueData: ""; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: dword; ValueName: "VendorId"; ValueData: "65535"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: dword; ValueName: "DeviceId"; ValueData: "1"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: dword; ValueName: "MinUpdateTimeMs"; ValueData: "8"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: dword; ValueName: "SendVlanTag"; ValueData: "1"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: dword; ValueName: "Promiscuous"; ValueData: "0"; Flags: uninsdeletekey createvalueifdoesntexist
+            Root: "HKLM"; Subkey: "{#UV_PARAMETERS}\\profinet"; ValueType: string; ValueName: "ByteOrder"; ValueData: "none"; Flags: uninsdeletekey createvalueifdoesntexist
+            ```
+            - Firewall: no change - the existing rule "ProInspect SoftFieldbus" allows the service executable on every port
+              (PROFINET RPC is UDP 34964).
+            - Npcap is **not** bundled (free licence: no redistribution). Add a `[Code]` check: if `transport\\profinet` is
+              selected and `{sys}\\Npcap\\wpcap.dll` does not exist, show "Install Npcap from https://npcap.com before starting
+              the service" (`WizardIsTaskSelected('transport\\profinet')`, `FileExists(ExpandConstant('{sys}\\Npcap\\wpcap.dll'))`).
+            - After installing with PROFINET, set `Parameters\\profinet\\Adapter` (or `BindAddress`) to the PLC NIC.
+            '''),
+          T('Service README', '`' + D3 + '/README.md`',
+            '''
+            - Intro and **Settings**: `Transport` gains `profinet`; new table **`Parameters\\profinet`** (values of the `.reg`
+              above, with Adapter falling back to BindAddress).
+            - **Running**: `-process profinet [0 [swap|none]]`.
+            - **PLC side**: new section "PROFINET (CODESYS, TIA Portal, ...)": Npcap prerequisite, GSDML import, module
+              choice 256 / 128, NameOfStation and IP, update time >= 8 ms, byte order, firewall note; the offset tables of
+              the existing sections apply to the first 252 / 112 bytes.
+            - **Diagnostics**: `statusDescription` shows e.g. "PROFINET RT: ConnectedRun"; status 1 = waiting for the
+              controller or still parameterising.
+            - **Troubleshooting**: rows from the [test runbook](../../profinet-test-runbook.md#8-troubleshooting) (scan does not
+              find the PC, IP refused, ModuleDiff, firewall).
+            '''),
+          T('Build and test', 'Same gates as phase 8, plus a PROFINET connection with the service.',
+            '''
+            - Build `SoftFieldbus1x` and the service in **Debug_2026, Release_2026, Debug_2022, Release_2022**, with and
+              without `NPCAP_SDK` (without: everything builds, `Transport=profinet` logs "no PROFINET support").
+              Debug builds run code analysis with `/WX` (the softpn sources are `/analyze` clean in FieldsBus).
+            - Existing transports unchanged: `-process eip` and `-process modbus-tcp` with `ProInspectProcessImagePlcSim`.
+            - PROFINET: `ProInspectProcessImageService -process`, then `ProInspectProcessImageSoftFieldbusService -process profinet`
+              with `Parameters\\profinet\\Adapter` set; CODESYS project with "Input 256 bytes" / "Output 128 bytes" ->
+              status "PROFINET RT: ConnectedRun", ProInspect sees the PLC data; `swap` and `none` checked against a known value.
+            - Results in `docs/phases/phase-9-profinet.md` (Dev.3 commit hash), like the phase 8 results tables.
+            '''),
+      ],
+      ['FieldsBus commit pushed; Dev.3 branch `dev/<story>/<task>` created',
+       'Sync: 28 added / 5 changed; vcxproj (+ .filters) updated',
+       'All four configurations build, with and without `NPCAP_SDK`; Debug code analysis clean',
+       'EtherNet/IP and Modbus still pass with the PLC simulator',
+       '`Transport=profinet`: CODESYS connects (Input 256 / Output 128), ProInspect data correct, `ByteOrder` none/swap verified',
+       '`.reg` files (4, UTF-16), GSDML folder, installer task + Npcap check, README updated'])
+
+
+# =====================================================================================================
+# Milestone I - own NDIS driver instead of Npcap
+# =====================================================================================================
+
+phase('9.20', 'NdisBackend', 'Own NDIS protocol driver backend (no Npcap)',
+      'Redistributing Npcap in a product needs the Npcap OEM licence. Replace it with an own NDIS 6.30 protocol driver '
+      '(`softpn_ndis.sys`, derived from the Microsoft NDISPROT sample) and a second Windows `L2Port` backend for it, '
+      'selected at run time with Npcap as fallback. The protocol code does not change. Decision record, driver '
+      'changes and test results: [HANDOFF-softpn-ndis-driver.md](../../HANDOFF-softpn-ndis-driver.md).',
+      ['[NDISPROT sample](https://github.com/microsoft/Windows-driver-samples/tree/main/network/ndis/ndisprot/6x)',
+       '[NDIS protocol drivers](https://learn.microsoft.com/windows-hardware/drivers/network/ndis-protocol-drivers2)',
+       '[NET_BUFFER_LIST 802.1Q info](https://learn.microsoft.com/windows-hardware/drivers/ddi/ndis/ns-ndis-_ndis_net_buffer_list_8021q_info)',
+       '[Driver signing offerings](https://learn.microsoft.com/windows-hardware/drivers/dashboard/driver-signing-offerings)'],
+      [
+          T('The driver (drivers/softpn_ndis)', 'Built with the WDK (MSBuild), not CMake; this phase only summarises it.',
+            '''
+            | Folder | Content |
+            |---|---|
+            | `upstream/` | the unmodified NDISPROT 6x sample (MS-PL, commit pinned in `ORIGIN.md`): the diff base |
+            | `sys/` | `softpn_ndis.sys`: changes marked `softpn:` |
+            | `inc/softpn_ndis_ioctl.h` | the interface shared with user mode (next step) |
+            | `test/softpn_ndis_test.cpp` | `list`, `selftest`, `send`, `recv` |
+            | `build.ps1`, `pack_kit.ps1` | build with the WDK NuGet packages (64-bit MSBuild), test kit with install scripts |
+
+            Changes against the sample:
+            - **Naming and access:** device `\\\\.\\SoftPnNdis`, SDDL SYSTEM + Administrators. Service, `Ndi\\Service` and
+              the NDIS protocol name are all `SoftPnNdis`; INF component `UV_SoftPnNdis`.
+            - **Per-handle filter** (`IOCTL_SOFTPN_SET_FILTER`): up to 8 EtherTypes, also behind an 802.1Q tag. The handle
+              receives and sends nothing until a filter is set, and it may only send with the adapter's source MAC.
+            - **Receive:** every accepted frame is copied, so the miniport's buffers go back at once. A tag stripped
+              by the NIC (OOB `Ieee8021QNetBufferListInfo`) is re-inserted inline. Loopback frames and the own source MAC
+              are dropped. The queue holds 256 frames (was 4), with counters (`IOCTL_SOFTPN_GET_STATS`).
+            - **Send:** no `NDIS_SEND_FLAGS_CHECK_FOR_LOOPBACK`; inline 802.1Q tags accepted.
+            - **Packet filter:** + ALL_MULTICAST, with a fallback to the multicast list 01:0E:CF:00:00:00 / 01:80:C2:00:00:0E.
+            - **Fixed sample bug:** a reference leak on the receive path while the adapter is paused.
+
+            Install on a test PC (test signing on, Secure Boot off): `install.cmd` from the kit
+            (`netcfg -l softpn_ndis.inf -c p -i UV_SoftPnNdis`, `net start SoftPnNdis`). A product needs a Microsoft
+            signature (WHCP or attestation): see the handoff.
+            ''',
+            ['**Protocol driver, not a filter (LWF)**: it binds to every Ethernet adapter like TCP/IP, without sitting '
+             'in the data path of the other protocols.',
+             '**One open handle per adapter** (sample design): two programs cannot use the same NIC at the same time.']),
+          F('drivers/softpn_ndis/inc/softpn_ndis_ioctl.h',
+            'The device names, IOCTL codes and structures of the driver, included by the driver and by '
+            '`l2_port_ndis.cpp`.',
+            ['**`SOFTPN_NDIS_API_VERSION`**: the backend checks it with `IOCTL_SOFTPN_GET_VERSION` and refuses a '
+             'driver that does not match.',
+             '**Sample IOCTLs unchanged** (0x200-0x205): enumeration (`QUERY_BINDING`), `OPEN_DEVICE`, OID query/set.']),
+          F('src/pn/l2_port_windows.hpp',
+            'Internal header of the two Windows backends: the shared helpers and the entry points the dispatcher calls.',
+            ['**`SOFTPN_HAS_NPCAP`**: the Npcap functions exist only when the Npcap SDK was found at configure time.']),
+          F('src/pn/l2_port_windows.cpp',
+            'The public `listAdapters()` / `openL2Port()` on Windows: picks the backend, then shares the IP Helper data, '
+            'the link state and the adapter selection between both.',
+            ['**`L2Backend::Auto`**: `SOFTPN_L2_BACKEND` (`npcap` / `ndis`) if set, else the driver if `\\\\.\\SoftPnNdis` '
+             'opens, else Npcap. A PC with the driver needs no Npcap; a PC with only Npcap works as before.',
+             '**Same adapter names for both**: the IP Helper data is matched by the GUID in the name '
+             '(`\\Device\\NPF_{GUID}` or `\\DEVICE\\{GUID}`), so friendly name, MAC and IPv4 select the NIC either way.']),
+          F('src/pn/l2_port_ndis.cpp',
+            'The `L2Port` on the driver: enumeration, open with the PROFINET filter, receive with reads posted in '
+            'advance, thread-safe send.',
+            ['**Reads posted in advance**: 4 overlapped reads wait in the driver. The driver completes them in posting '
+             'order, so `receive()` waits for the oldest one only and reposts it after copying.',
+             '**`interrupt()`**: an event next to the read event, as in the Npcap backend; the destructor cancels the '
+             'reads (`CancelIoEx`) and waits for them.',
+             '**Send timeout**: a write that the NIC does not complete within 1 s is cancelled, so a stuck NIC cannot '
+             'block the cyclic thread forever.']),
+          S('CMakeLists.txt', 'Build both Windows backends; Npcap optional',
+            'On Windows softpn is always built now. The Npcap backend and the `wpcap.dll` delay-load are added only with '
+            'the SDK. One function applies the settings to `softpn` and `softfieldbus_shared`.',
+            '''
+                set(SOFTPN_HAS_NPCAP OFF)
+                if(WIN32)
+                    set(SOFTPN_ENABLED ON)
+                    if(SOFTPN_NPCAP_SDK AND EXISTS "${SOFTPN_NPCAP_SDK}/Include/pcap.h")
+                        set(SOFTPN_HAS_NPCAP ON)
+                    endif()
+                endif()
+
+                function(softpn_windows_l2 target scope)
+                    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/drivers/softpn_ndis/inc)
+                    target_link_libraries(${target} ${scope} iphlpapi)
+                    if(SOFTPN_HAS_NPCAP)
+                        target_compile_definitions(${target} PRIVATE SOFTPN_HAS_NPCAP=1)
+                        # ... Npcap include, wpcap.lib, delayimp, /DELAYLOAD:wpcap.dll as before ...
+                    endif()
+                endfunction()
+
+                # SOFTPN_SOURCES on Windows:
+                list(APPEND SOFTPN_SOURCES src/pn/l2_port_windows.cpp src/pn/l2_port_ndis.cpp)
+                if(SOFTPN_HAS_NPCAP)
+                    list(APPEND SOFTPN_SOURCES src/pn/l2_port_npcap.cpp)
+                endif()
+
+                softpn_windows_l2(softpn PUBLIC)                    # after add_library(softpn ...)
+                softpn_windows_l2(softfieldbus_shared PRIVATE)      # in the SoftFieldbus.dll block
+            ''',
+            ['**Dev.3**: the DLL project needs the same split (always `l2_port_windows.cpp` + `l2_port_ndis.cpp`, '
+             '`l2_port_npcap.cpp` with `SOFTPN_HAS_NPCAP=1` only with the SDK) and `drivers\\softpn_ndis\\inc` on the '
+             'include path; `tools/sync-to-dev3.ps1` mirrors that folder. This replaces the block of Phase 9.19.']),
+          T('Choosing the backend', '`L2Options::backend`, `DeviceConfig::l2Backend` and a `--backend` option in the tools.',
+            '''
+            ```
+            pn_probe --list [--backend auto|npcap|ndis]           # each adapter shows [ndis] or [npcap]
+            pn_device_demo --adapter "Ethernet 4" --name softpn-dev1 --backend ndis
+            pn_controller_sim --adapter "Ethernet 3" --name softpn-dev1 --backend ndis
+            set SOFTPN_L2_BACKEND=npcap                            # for programs without the option (service, C#)
+            ```
+            Errors are explicit: "softpn_ndis driver not running (install it, then: net start SoftPnNdis)", "access denied
+            (the driver allows administrators and services only)", "this build has no Npcap backend".
+            '''),
+      ],
+      ['`pn_selftest` 112/112 with and without `SOFTPN_NPCAP_SDK`; without it no tool imports `wpcap.dll`',
+       'Without the driver: `--backend ndis` reports "driver not running", `auto` falls back to Npcap',
+       '`softpn_ndis_test selftest` 18/18 on a test VM',
+       'Two VMs: multicast DCP received, 8 ms jitter, `pn_device_demo` vs `pn_controller_sim` in DataRun with 0 aborts',
+       'Physical NIC (open, D4): 802.1Q-tagged RT frames, CODESYS controller, timing compared with Npcap'],
+      results='''
+      Two Hyper-V VMs on PC-PROVE (Windows 11, Default Switch, test signing), 2026-10-17:
+
+      | Test | Result |
+      |---|---|
+      | Frames from the other VM (0x88B5 broadcast) | delivered |
+      | DCP Identify multicast 01:0E:CF:00:00:00 | received (`rx accepted 1 delivered 1`) |
+      | 802.1Q prio 6 + 0x8892 | **not received**: the Hyper-V adapter / switch drops tagged frames (VM tests use `--no-vlan 1` / `--vlan 0`); open for a physical NIC |
+      | `pn_probe --jitter` 8 ms, 30 s | TX max 8.50 ms (p99 8.41), RX gaps max 8.65 ms (p99 8.43), 0 lost, `send()` p99 47 us |
+      | `pn_device_demo` vs `pn_controller_sim`, 8 ms, 30 s | DCP, Connect, Write, Read I&M0, PrmEnd, ApplicationReady OK; `tx 1781 rx 1780, max TX period 8511 us, late 0, aborts 0`; clean release |
+
+      Found on the way: `pn_controller_sim` never called WSAStartup ("RPC: cannot create UDP socket" on Windows; it
+      had only run on Linux or next to a device in the same process). Fixed.
+      ''')
+
+
 # =====================================================================================================
 # Rendering
 # =====================================================================================================
@@ -893,7 +1332,9 @@ def render_index():
     rows = []
     milestone = {'9.01': 'A - L2 access and timing', '9.06': 'B/C - LLDP, RPC, blocks, model',
                  '9.10': 'D - cyclic, alarms, AR, device', '9.14': 'E - test tools',
-                 '9.16': 'F - common API and .NET', '9.18': 'G - CODESYS bring-up'}
+                 '9.16': 'F - common API and .NET', '9.18': 'G - CODESYS bring-up',
+                 '9.19': 'H - Dev.3 integration (prepared, not applied)',
+                 '9.20': 'I - own NDIS driver instead of Npcap'}
     for p in PHASES:
         if p['num'] in milestone:
             rows.append(f'| **{milestone[p["num"]]}** | | |')
@@ -911,7 +1352,10 @@ Results: [phase-9-profinet.md](../phase-9-profinet.md).
 
 The phases follow the include dependencies of the code, so each phase compiles on top of the previous
 ones. The spec planned 24 phases; codecs and their users were merged where a file could not be split
-without duplicating code, giving 18.
+without duplicating code, giving 18. Phase 9.19 adds PROFINET to the Dev.3 process-image service.
+
+Test procedure with CODESYS / a real PLC: [profinet-test-runbook.md](../../profinet-test-runbook.md); test kit:
+`tools/pack_profinet_test.ps1`.
 
 | Phase | Title | Files |
 |---|---|---|

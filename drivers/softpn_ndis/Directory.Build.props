@@ -1,0 +1,18 @@
+<Project>
+<!-- WDK + SDK from NuGet (packages.config, restored into .\packages with nuget restore). Taken from
+     Windows-driver-samples/Directory.Build.props, x64 only. -->
+<Import Project="packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'"/>
+<Import Project="packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.x64.props') and '$(Platform)' == 'x64'"/>
+<Import Project="packages\Microsoft.Windows.SDK.CPP.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.props" Condition="Exists('packages\Microsoft.Windows.SDK.CPP.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.props')"/>
+
+<!-- The WDK Visual Studio component on this PC is the VS 2022 one (VS 2026 redirects the
+     WindowsKernelModeDriver10.0 toolset to v170). It does not set the versioned WDK folders of the
+     NuGet package, so the unversioned stub targets and the wrong bin folder were used. -->
+<PropertyGroup>
+  <WDKBuildFolder Condition="'$(WDKBuildFolder)' == ''">10.0.28000.0</WDKBuildFolder>
+  <WDKBinRoot Condition="'$(WDKBinRoot)' == ''">$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0</WDKBinRoot>
+</PropertyGroup>
+<!-- Build with the 64-bit MSBuild (build.ps1 / VS IDE): the 32-bit MSBuild.exe makes the WDK pick its
+     x86 tool folder, which this package lacks (stampinf, InfVerif, ApiValidator fail). -->
+
+</Project>

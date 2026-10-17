@@ -53,8 +53,10 @@ struct DeviceConfig {
     uint32_t minUpdateTimeMs = 8;      // Connect requests with a faster update time are refused
     bool sendVlanTag = true;           // RT and alarm frames with 802.1Q priority 6
     bool promiscuous = false;          // see L2Options::promiscuous
+    L2Backend l2Backend = L2Backend::Auto; // Windows: softpn_ndis driver or Npcap, see L2Backend
     bool raiseThreadPriority = true;   // RX and cyclic threads at TIME_CRITICAL
     uint16_t rpcPort = 34964;          // tests only: another port when a controller runs on this PC
+    uint16_t controllerRpcPort = 34964; // tests only: the controller's RPC port when it runs on this PC
     std::shared_ptr<L2Port> port;      // tests only: use this port instead of opening `adapter`
 
     // Callbacks run on the stack's threads: keep them short and never call stop() from one.

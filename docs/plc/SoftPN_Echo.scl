@@ -1,0 +1,70 @@
+// SoftPN echo test for S7-1200 / S7-1500 (TIA Portal), see docs/softpn-siemens-setup.md section 4.5.
+//
+// Import: PLC_1 -> External source files -> Add new external file -> this file,
+//         right-click it -> Generate blocks from source. Creates FB "SoftPN_Echo".
+// Call it in OB1 with an instance DB and the hardware identifiers of the two SoftPN modules
+// (PLC tags -> Show all tags -> System constants, data type Hw_SubModule), for example:
+//
+//     "SoftPN_Echo_DB"(hwIn  := "SoftPN_device~Input_32_bytes_(PC_to_PLC)_1",
+//                      hwOut := "SoftPN_device~Output_32_bytes_(PLC_to_PC)_1");
+//
+// Data layout (32-byte modules):
+//   Input  (PC -> PLC): bytes 0..3 heartbeat counter from the PC (little-endian), 4..31 echo of the outputs
+//   Output (PLC -> PC): bytes 4..31 test pattern, changed every 500 ms
+// Watch bHeartbeatOk (the PC is alive) and bEchoOk (the PC returned the pattern) in the instance DB.
+FUNCTION_BLOCK "SoftPN_Echo"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_INPUT
+      hwIn  : HW_IO;     // hardware identifier of the input module  (PC -> PLC)
+      hwOut : HW_IO;     // hardware identifier of the output module (PLC -> PC)
+   END_VAR
+
+   VAR
+      abIn          : Array[0..31] of Byte;
+      abOut         : Array[0..31] of Byte;
+      tPattern      : TON_TIME;
+      tSecond       : TON_TIME;
+      usPattern     : USInt;
+      dwHeartbeat   : DWord;
+      dwLastBeat    : DWord;
+      bHeartbeatOk  : Bool;   // TRUE: the PC is alive
+      bEchoOk       : Bool;   // TRUE: the PC returned our pattern
+      iRetRead      : Int;    // 0 = OK
+      iRetWrite     : Int;    // 0 = OK
+      i             : Int;
+   END_VAR
+
+BEGIN
+    // consistent read of the whole input module (32 bytes)
+    #iRetRead := DPRD_DAT(LADDR := #hwIn, RECORD => #abIn);
+
+    // heartbeat from the PC (bytes 0..3, little-endian); must change at least once per second
+    #dwHeartbeat := SHL(IN := BYTE_TO_DWORD(#abIn[3]), N := 24) OR SHL(IN := BYTE_TO_DWORD(#abIn[2]), N := 16)
+                 OR SHL(IN := BYTE_TO_DWORD(#abIn[1]), N := 8) OR BYTE_TO_DWORD(#abIn[0]);
+    #tSecond(IN := NOT #tSecond.Q, PT := T#1S);
+    IF #tSecond.Q THEN
+        #bHeartbeatOk := #dwHeartbeat <> #dwLastBeat;
+        #dwLastBeat := #dwHeartbeat;
+    END_IF;
+
+    // echo check: bytes 4..31 must come back (FALSE for a few cycles right after the pattern changes)
+    #bEchoOk := TRUE;
+    FOR #i := 4 TO 31 DO
+        IF #abIn[#i] <> #abOut[#i] THEN
+            #bEchoOk := FALSE;
+        END_IF;
+    END_FOR;
+
+    // new pattern every 500 ms in bytes 4..31
+    #tPattern(IN := NOT #tPattern.Q, PT := T#500MS);
+    IF #tPattern.Q THEN
+        #usPattern := #usPattern + 1;
+    END_IF;
+    FOR #i := 4 TO 31 DO
+        #abOut[#i] := USINT_TO_BYTE(#usPattern + INT_TO_USINT(#i));
+    END_FOR;
+
+    // consistent write of the whole output module
+    #iRetWrite := DPWR_DAT(LADDR := #hwOut, RECORD := #abOut);
+END_FUNCTION_BLOCK

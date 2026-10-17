@@ -75,8 +75,10 @@ struct DeviceConfig {
     uint32_t minUpdateTimeMs = 8;      // Connect requests with a faster update time are refused
     bool sendVlanTag = true;           // RT and alarm frames with 802.1Q priority 6
     bool promiscuous = false;          // see L2Options::promiscuous
+    L2Backend l2Backend = L2Backend::Auto; // Windows: softpn_ndis driver or Npcap, see L2Backend
     bool raiseThreadPriority = true;   // RX and cyclic threads at TIME_CRITICAL
     uint16_t rpcPort = 34964;          // tests only: another port when a controller runs on this PC
+    uint16_t controllerRpcPort = 34964; // tests only: the controller's RPC port when it runs on this PC
     std::shared_ptr<L2Port> port;      // tests only: use this port instead of opening `adapter`
 
     // Callbacks run on the stack's threads: keep them short and never call stop() from one.
@@ -296,6 +298,9 @@ struct Device::Impl {
                 LldpInfo li;
                 li.mac = port->info().mac;
                 li.stationName = dcp->station().name;
+                const LinkStatus ls = port->link(); // every 5 s: follows a renegotiated link speed
+                if (const uint16_t mau = lldp::mauTypeFor(ls.speedMbps, ls.fullDuplex))
+                    li.mauType = mau;
                 send(buildLldpFrame(li));
                 nextLldp = now + std::chrono::milliseconds(lldp::kTxIntervalMs);
             }
@@ -341,6 +346,7 @@ bool Device::start(std::string* error)
     } else {
         L2Options opt;
         opt.promiscuous = c.promiscuous;
+        opt.backend = c.l2Backend;
         std::unique_ptr<L2Port> p = openL2Port(c.adapter, opt, &err);
         if (!p)
             return fail(err);
@@ -392,6 +398,7 @@ bool Device::start(std::string* error)
     ac.minUpdateTimeMs = c.minUpdateTimeMs;
     ac.vlan = c.sendVlanTag;
     ac.rpcPort = c.rpcPort;
+    ac.controllerRpcPort = c.controllerRpcPort;
     ac.im0.orderId = c.orderId;
     ac.im0.serialNumber = c.serialNumber;
     ac.im0.hardwareRevision = c.hardwareRevision;
@@ -419,7 +426,9 @@ bool Device::start(std::string* error)
     d.rpc.setResponseHandler([&d](const RpcHeader& h, const std::vector<uint8_t>& body, const UdpAddress& from) {
         d.ar->handleResponse(h, body, from);
     });
-    if (!d.rpc.open(c.rpcPort, &err)) {
+    // Bound to the NIC's address: the replies leave through this NIC with this source IP even when the PC has
+    // another interface in the same subnet (e.g. a second NIC for the engineering tool).
+    if (!d.rpc.open(c.rpcPort, &err, nic.ipv4)) {
         d.port.reset();
         return fail(err);
     }
@@ -533,6 +542,7 @@ Echo device like `eip_adapter_demo`: outputs are echoed back from byte 4, bytes 
 //
 // Usage: pn_device_demo --adapter <name|mac|ip> [--name softpn-device] [--in-size 32] [--out-size 32]
 //                       [--min-update-ms 8] [--no-vlan 1] [--promisc 0|1] [--priority 0|1] [--persist softpn.ini]
+//                       [--backend auto|npcap|ndis]
 //        pn_device_demo --list
 //
 // In the PLC project: GSDML gsdml/GSDML-V2.43-Univision-SoftPN-*.xml, slot 1 "Input <in-size> bytes",
@@ -603,6 +613,12 @@ int main(int argc, char** argv)
         else if (k == "--promisc") cfg.promiscuous = n != 0;
         else if (k == "--priority") cfg.raiseThreadPriority = n != 0;
         else if (k == "--persist") cfg.persistPath = v;
+        else if (k == "--backend") {
+            if (!softpn::parseL2Backend(v, cfg.l2Backend)) {
+                std::fprintf(stderr, "--backend: auto, npcap or ndis\n");
+                return 2;
+            }
+        }
         else {
             std::fprintf(stderr, "unknown option %s\n", k.c_str());
             return 2;

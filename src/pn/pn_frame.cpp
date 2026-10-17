@@ -53,6 +53,32 @@ bool MacAddress::isZero() const
     return true;
 }
 
+bool parseL2Backend(const std::string& text, L2Backend& out)
+{
+    std::string t;
+    for (char c : text)
+        t += char(std::tolower(static_cast<unsigned char>(c)));
+    if (t == "auto")
+        out = L2Backend::Auto;
+    else if (t == "npcap")
+        out = L2Backend::Npcap;
+    else if (t == "ndis")
+        out = L2Backend::Ndis;
+    else
+        return false;
+    return true;
+}
+
+const char* l2BackendName(L2Backend b)
+{
+    switch (b) {
+    case L2Backend::Npcap: return "npcap";
+    case L2Backend::Ndis: return "ndis";
+    case L2Backend::Auto: break;
+    }
+    return "auto";
+}
+
 std::string ipToString(uint32_t ip)
 {
     char s[16];

@@ -14,7 +14,7 @@ struct LldpInfo {
     MacAddress mac;            // interface MAC (also used as ChassisMAC and port MAC on a 1-port PC NIC)
     std::string stationName;   // ChassisID; empty -> the MAC is used
     std::string portId = "port-001";
-    uint16_t mauType = 16;     // 100BASE-TX full duplex
+    uint16_t mauType = 16;     // operational MAU type; 16 = 100BASE-TX full duplex (used when the speed is unknown)
 };
 
 // Complete LLDP Ethernet frame to 01:80:C2:00:00:0E.

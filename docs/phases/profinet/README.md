@@ -10,7 +10,10 @@ Results: [phase-9-profinet.md](../phase-9-profinet.md).
 
 The phases follow the include dependencies of the code, so each phase compiles on top of the previous
 ones. The spec planned 24 phases; codecs and their users were merged where a file could not be split
-without duplicating code, giving 18.
+without duplicating code, giving 18. Phase 9.19 adds PROFINET to the Dev.3 process-image service.
+
+Test procedure with CODESYS / a real PLC: [profinet-test-runbook.md](../../profinet-test-runbook.md); test kit:
+`tools/pack_profinet_test.ps1`.
 
 | Phase | Title | Files |
 |---|---|---|
@@ -38,6 +41,10 @@ without duplicating code, giving 18.
 | [9.17](Phase9.17-DotNetWrapper.md) | PROFINET in SoftFieldbus.Net (C#) | `SoftFieldbusNet.h`, `SoftFieldbusNet.cpp`, `Program.cs` |
 | **G - CODESYS bring-up** | | |
 | [9.18](Phase9.18-CodesysBringUp.md) | Windows setup and CODESYS bring-up (Gates C and D) | - |
+| **H - Dev.3 integration (prepared, not applied)** | | |
+| [9.19](Phase9.19-Dev3ProcessImageService.md) | Dev.3: PROFINET in ProInspectProcessImageSoftFieldbusService | - |
+| **I - own NDIS driver instead of Npcap** | | |
+| [9.20](Phase9.20-NdisBackend.md) | Own NDIS protocol driver backend (no Npcap) | `softpn_ndis_ioctl.h`, `l2_port_windows.hpp`, `l2_port_windows.cpp`, `l2_port_ndis.cpp` |
 
 ## Gates
 - **A** (9.05): Windows TX timing on the station NIC - `pn_probe --jitter`.

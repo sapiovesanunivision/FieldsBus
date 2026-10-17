@@ -57,6 +57,7 @@ struct ArConfig {
     uint32_t minUpdateTimeMs = 8;
     bool vlan = true;
     uint16_t rpcPort = 34964;
+    uint16_t controllerRpcPort = 34964; // ApplicationReady target port
     Im0Data im0;
 };
 
@@ -103,6 +104,7 @@ private:
     std::vector<uint8_t> onWrite(const NdrArgs& args);
     std::vector<uint8_t> onRead(const NdrArgs& args, bool implicit);
     PnioStatus writeRecord(const RecordHeader& h, const uint8_t* data, size_t len);
+    void logRecord(const char* what, const RecordHeader& h, size_t len, const PnioStatus& st);
     PnioStatus validateConnect(const ConnectRequest& c) const;
     void sendApplicationReady();
     void setState(ArState s);
@@ -157,6 +159,7 @@ Connect validation and response, Write (incl. multiple write 0xE040 and PDev rec
 #include "pn_defs.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace softpn {
 
@@ -225,8 +228,11 @@ void ArManager::setState(ArState s)
 
 bool ArManager::handleRequest(const RpcRequest& req, std::vector<uint8_t>& responseBody)
 {
-    if (req.header.interfaceId != pnioDeviceInterface())
+    if (req.header.interfaceId != pnioDeviceInterface()) {
+        log("RPC: request for interface " + req.header.interfaceId.str() + " opnum " +
+            std::to_string(req.header.opnum) + " from " + req.from.str() + " rejected (not the PNIO device interface)");
         return false; // e.g. the endpoint mapper: not supported
+    }
     NdrArgs args;
     try {
         args = parseNdrRequest(req.body.data(), req.body.size(), req.header.littleEndian);
@@ -243,7 +249,9 @@ bool ArManager::handleRequest(const RpcRequest& req, std::vector<uint8_t>& respo
     case rpc::kOpWrite: responseBody = onWrite(args); return true;
     case rpc::kOpControl: responseBody = onControl(args); return true;
     case rpc::kOpReadImplicit: responseBody = onRead(args, true); return true;
-    default: return false;
+    default:
+        log("RPC: unsupported opnum " + std::to_string(req.header.opnum) + " from " + req.from.str() + " rejected");
+        return false;
     }
 }
 
@@ -274,7 +282,8 @@ PnioStatus ArManager::validateConnect(const ConnectRequest& c) const
             return connectError(kCode1IocrBlock, 7);
         if (cr->dataLength < kMinCsduLength || cr->dataLength > kMaxCsduLength)
             return connectError(kCode1IocrBlock, 8);
-        if (cr->frameId < kFrameIdRtClass1First || cr->frameId > kFrameIdRtClass1Last)
+        const bool deviceChooses = cr->iocrType == kIocrTypeOutput && cr->frameId == kFrameIdDeviceChooses;
+        if (!deviceChooses && (cr->frameId < kFrameIdRtClass1First || cr->frameId > kFrameIdRtClass1Last))
             return connectError(kCode1IocrBlock, 9);
         if (cr->sendClockFactor != kSendClockFactor1ms)
             return connectError(kCode1IocrBlock, 10);
@@ -324,7 +333,14 @@ std::vector<uint8_t> ArManager::onConnect(const RpcRequest& req, const NdrArgs& 
         }
     }
     if (!st.ok()) {
-        log("AR: Connect refused, PNIOStatus " + st.str());
+        std::string crs;
+        for (const IocrBlockReq& cr : c.iocrs) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, " [IOCR type %u FrameID 0x%04X props 0x%08X len %u]", unsigned(cr.iocrType),
+                          unsigned(cr.frameId), unsigned(cr.iocrProperties), unsigned(cr.dataLength));
+            crs += buf;
+        }
+        log("AR: Connect refused, PNIOStatus " + st.str() + crs);
         return buildNdrResponse(st, args.argsMaximum, {});
     }
 
@@ -359,7 +375,11 @@ std::vector<uint8_t> ArManager::onConnect(const RpcRequest& req, const NdrArgs& 
         for (const IoDataObject& o : api.iocs)
             cs.inputIocs.push_back({o.frameOffset, check.proper.count(submoduleKey(api.api, o.slot, o.subslot)) != 0});
     }
-    cs.outputFrameId = out->frameId;
+    // Output CR FrameID 0xFFFF: the device (the receiver) chooses it and returns it in the IOCRBlockRes.
+    uint16_t outputFrameId = out->frameId;
+    if (outputFrameId == kFrameIdDeviceChooses)
+        outputFrameId = in->frameId != kOurOutputFrameId ? kOurOutputFrameId : uint16_t(kOurOutputFrameId + 1);
+    cs.outputFrameId = outputFrameId;
     cs.outputDataLength = out->dataLength;
     const uint64_t outPeriodUs = uint64_t(out->sendClockFactor) * out->reductionRatio * kTimeBaseNs / 1000;
     cs.dataHoldUs = uint32_t(outPeriodUs * out->dataHoldFactor);
@@ -376,9 +396,11 @@ std::vector<uint8_t> ArManager::onConnect(const RpcRequest& req, const NdrArgs& 
 
     // ---- response blocks --------------------------------------------------------------------------
     ByteWriter w;
-    writeArBlockRes(w, ArBlockRes{c.ar.arType, c.ar.arUuid, c.ar.sessionKey, cfg_.mac, cfg_.rpcPort});
+    // CMResponderUDPRTPort is the RT_CLASS_UDP port 0x8892 (like CMInitiatorUDPRTPort), not the RPC port.
+    writeArBlockRes(w, ArBlockRes{c.ar.arType, c.ar.arUuid, c.ar.sessionKey, cfg_.mac, kUdpRtPort});
     for (const IocrBlockReq& cr : c.iocrs)
-        writeIocrBlockRes(w, IocrBlockRes{cr.iocrType, cr.iocrReference, cr.frameId});
+        writeIocrBlockRes(w, IocrBlockRes{cr.iocrType, cr.iocrReference,
+                                          &cr == out ? outputFrameId : cr.frameId});
     writeAlarmCrBlockRes(w, AlarmCrBlockRes{alarm.alarmCrType, kOurAlarmReference,
                                             std::min(alarm.maxAlarmDataLength, kMaxAlarmDataLength)});
     if (!check.diff.empty()) {
@@ -393,7 +415,9 @@ std::vector<uint8_t> ArManager::onConnect(const RpcRequest& req, const NdrArgs& 
     arUuid_ = c.ar.arUuid;
     sessionKey_ = c.ar.sessionKey;
     initiatorObject_ = c.ar.cmInitiatorObjectUuid;
-    controllerRpc_ = UdpAddress{req.from.ip, c.ar.cmInitiatorUdpPort ? c.ar.cmInitiatorUdpPort : rpc::kPort};
+    // ApplicationReady goes to the controller's PNIO-CM RPC port (34964). CMInitiatorUDPRTPort (0x8892) in the
+    // ARBlockReq is the RT_CLASS_UDP port and not an RPC endpoint (the CODESYS PN-Controller does not answer there).
+    controllerRpc_ = UdpAddress{req.from.ip, cfg_.controllerRpcPort};
     const unsigned timeoutMs = 100u * std::max<unsigned>(c.ar.activityTimeoutFactor, 1u);
     deadline_ = Clock::now() + std::chrono::milliseconds(timeoutMs);
     appReadyActivity_ = Uuid{};
@@ -414,7 +438,8 @@ std::vector<uint8_t> ArManager::onConnect(const RpcRequest& req, const NdrArgs& 
         hooks_.startCyclic(cs);
     log("AR: connected to '" + c.ar.cmInitiatorStationName + "' (" + c.ar.cmInitiatorMac.str() + "), update time " +
         std::to_string(cs.periodUs / 1000) + " ms, C_SDU in/out " + std::to_string(cs.inputDataLength) + "/" +
-        std::to_string(cs.outputDataLength) + " bytes");
+        std::to_string(cs.outputDataLength) + " bytes, Connect from " + req.from.str() + ", output FrameID " +
+        std::to_string(cs.outputFrameId));
     setState(ArState::WaitPrmEnd);
     return buildNdrResponse(PnioStatus{}, args.argsMaximum, blocksOf(w));
 }
@@ -454,9 +479,14 @@ std::vector<uint8_t> ArManager::onControl(const NdrArgs& args)
     if (state_ == ArState::Idle || cb.arUuid != arUuid_)
         return buildNdrResponse(PnioStatus::make(kCodeControl, kDecodePnio, kCode1Cmrpc, kCmrpcArUuidUnknown),
                                 args.argsMaximum, {});
-    if (cb.type != block::kPrmEndReq || !(cb.command & kControlPrmEnd) || state_ != ArState::WaitPrmEnd)
+    if (cb.type != block::kPrmEndReq || !(cb.command & kControlPrmEnd) || state_ != ArState::WaitPrmEnd) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "AR: Control block 0x%04X command 0x%04X refused in state %s",
+                      unsigned(cb.type), unsigned(cb.command), arStateName(state_));
+        log(buf);
         return buildNdrResponse(PnioStatus::make(kCodeControl, kDecodePnio, kCode1Cmrpc, kCmrpcStateConflict),
                                 args.argsMaximum, {});
+    }
     ByteWriter w;
     ControlBlock res = cb;
     res.type = block::kPrmEndRes;
@@ -471,19 +501,29 @@ std::vector<uint8_t> ArManager::onControl(const NdrArgs& args)
     return buildNdrResponse(PnioStatus{}, args.argsMaximum, blocksOf(w));
 }
 
+void ArManager::logRecord(const char* what, const RecordHeader& h, size_t len, const PnioStatus& st)
+{
+    char buf[128];
+    std::snprintf(buf, sizeof buf, "AR: %s slot %u subslot 0x%04X index 0x%04X, %u bytes -> %s", what,
+                  unsigned(h.slot), unsigned(h.subslot), unsigned(h.index), unsigned(len),
+                  st.ok() ? "OK" : ("PNIOStatus " + st.str()).c_str());
+    log(buf);
+}
+
 PnioStatus ArManager::writeRecord(const RecordHeader& h, const uint8_t* data, size_t len)
 {
     using namespace err;
     (void)data;
-    (void)len;
+    PnioStatus st;
     if (!model_.find(h.api, h.slot, h.subslot))
-        return PnioStatus::make(kCodeWrite, kDecodePnioRw, kRwInvalidSlotSubslot, 0);
+        st = PnioStatus::make(kCodeWrite, kDecodePnioRw, kRwInvalidSlotSubslot, 0);
     // Slot 0 (DAP, interface, port): PDev records such as PDPortDataCheck (0x802B) or
     // PDPortDataAdjust (0x802F). Accepted and ignored: topology and port settings are not
-    // checked by this software device.
-    if (h.slot == 0)
-        return PnioStatus{};
-    return PnioStatus::make(kCodeWrite, kDecodePnioRw, kRwInvalidIndex, 0); // IO modules have no parameters
+    // checked by this software device. IO modules have no parameters.
+    else if (h.slot != 0)
+        st = PnioStatus::make(kCodeWrite, kDecodePnioRw, kRwInvalidIndex, 0);
+    logRecord("Write", h, len, st);
+    return st;
 }
 
 std::vector<uint8_t> ArManager::onWrite(const NdrArgs& args)
@@ -574,6 +614,7 @@ std::vector<uint8_t> ArManager::onRead(const NdrArgs& args, bool implicit)
     }
     if (data.size() > h.recordDataLength && st.ok())
         st = PnioStatus::make(kCodeRead, kDecodePnioRw, kRwWriteLengthError, 0);
+    logRecord(implicit ? "Read (implicit)" : "Read", h, st.ok() ? data.size() : 0, st);
 
     ByteWriter w;
     RecordHeader res = h;

@@ -111,6 +111,21 @@ public:
 
     const AdapterInfo& info() const override { return info_; }
 
+    LinkStatus link() const override
+    {
+        // /sys/class/net/<if>/speed is -1 or unreadable without link and on virtual interfaces (veth).
+        LinkStatus ls;
+        std::ifstream speed("/sys/class/net/" + info_.name + "/speed");
+        long mbps = 0;
+        if (speed >> mbps && mbps > 0)
+            ls.speedMbps = uint32_t(mbps);
+        std::ifstream duplex("/sys/class/net/" + info_.name + "/duplex");
+        std::string d;
+        if (duplex >> d)
+            ls.fullDuplex = d != "half";
+        return ls;
+    }
+
     uint16_t extraType_ = 0;
 
 private:
@@ -141,6 +156,7 @@ std::vector<AdapterInfo> listAdapters(std::string* error)
         if (!info) {
             AdapterInfo n;
             n.name = n.friendlyName = a->ifa_name;
+            n.backend = "af_packet";
             if (!readMac(n.name, n.mac) || n.mac.isZero())
                 continue;
             n.gateway = readGateway(n.name);
@@ -155,6 +171,11 @@ std::vector<AdapterInfo> listAdapters(std::string* error)
     }
     freeifaddrs(all);
     return list;
+}
+
+std::vector<AdapterInfo> listAdapters(L2Backend, std::string* error)
+{
+    return listAdapters(error); // AF_PACKET only: the Windows backend choice does not apply
 }
 
 std::unique_ptr<L2Port> openL2Port(const std::string& selector, const L2Options& options, std::string* error)

@@ -1,0 +1,110 @@
+;-------------------------------------------------------------------------
+; softpn_ndis.inf - NDIS 6.30 protocol driver for softpn (raw PROFINET / LLDP frames from user mode)
+;
+; Derived from NDISPROT630.INF of the Microsoft NDISPROT 6x sample (MS-PL).
+; Install: netcfg -v -l softpn_ndis.inf -c p -i UV_SoftPnNdis      Remove: netcfg -v -u UV_SoftPnNdis
+;-------------------------------------------------------------------------
+[version]
+Signature   = "$Windows NT$"
+Class       = NetTrans
+ClassGUID   = {4d36e975-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderString%
+DriverVer   = 10/16/2026,0.1.0.0
+CatalogFile = softpn_ndis.cat
+PnpLockdown = 1
+
+; Builds 25319 and later install from the driver store (DIRID 13), older ones to drivers (12).
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$,NT$ARCH$.10.0...25319
+
+[Standard.NT$ARCH$.10.0...25319]
+%SOFTPN_Desc%=Install, UV_SoftPnNdis
+
+[Standard.NT$ARCH$]
+%SOFTPN_Desc%=Install_NC, UV_SoftPnNdis
+
+;-------------------------------------------------------------------------
+; Installation Section
+;-------------------------------------------------------------------------
+[Install]
+AddReg=Inst_Ndi
+Characteristics=0x0
+CopyFiles=CpyFiles_Sys
+
+[Install_NC]
+AddReg=Inst_Ndi
+Characteristics=0x0
+CopyFiles=CpyFiles_Sys_NC
+
+;-------------------------------------------------------------------------
+; Ndi installation support (the sample had "Ndisprot" here and "Ndisprot630" as service name;
+; service, Ndi\Service and the NDIS protocol name are all SoftPnNdis now)
+;-------------------------------------------------------------------------
+[Inst_Ndi]
+HKR,Ndi,Service,,"SoftPnNdis"
+HKR,Ndi,HelpText,,%SOFTPN_HelpText%
+HKR,Ndi\Interfaces, UpperRange,, noupper
+HKR,"Ndi\Interfaces","LowerRange",,"ndis5,ndis4,ndis5_prot"
+
+;-------------------------------------------------------------------------
+; Service installation support
+;-------------------------------------------------------------------------
+[Install.Services]
+AddService=SoftPnNdis,,SOFTPN_Service_Inst
+
+[SOFTPN_Service_Inst]
+DisplayName     = %SOFTPN_Desc%
+ServiceType     = 1 ;SERVICE_KERNEL_DRIVER
+StartType       = 3 ;SERVICE_DEMAND_START
+ErrorControl    = 1 ;SERVICE_ERROR_NORMAL
+ServiceBinary   = %13%\softpn_ndis.sys
+Description     = %SOFTPN_Desc%
+AddReg          = NdisImPlatformBinding_Reg
+
+[Install_NC.Services]
+AddService=SoftPnNdis,,SOFTPN_Service_Inst_NC
+
+[SOFTPN_Service_Inst_NC]
+DisplayName     = %SOFTPN_Desc%
+ServiceType     = 1 ;SERVICE_KERNEL_DRIVER
+StartType       = 3 ;SERVICE_DEMAND_START
+ErrorControl    = 1 ;SERVICE_ERROR_NORMAL
+ServiceBinary   = %12%\softpn_ndis.sys
+Description     = %SOFTPN_Desc%
+AddReg          = NdisImPlatformBinding_Reg
+
+[NdisImPlatformBinding_Reg]
+; Default behaviour for LBFO teams / bridges (see the sample INF for the options).
+HKR, Parameters, NdisImPlatformBindingOptions,0x00010001,0
+
+[Install.Remove.Services]
+DelService=SoftPnNdis,0x200
+
+[Install_NC.Remove.Services]
+DelService=SoftPnNdis,0x200
+
+;-------------------------------------------------------------------------
+; Declare Destination Directories for file copy/deletion
+;-------------------------------------------------------------------------
+[SourceDisksNames]
+1=%DiskDescription%,"",,
+
+[SourceDisksFiles]
+softpn_ndis.sys=1
+
+[DestinationDirs]
+CpyFiles_Sys        = 13
+CpyFiles_Sys_NC     = 12
+
+[CpyFiles_Sys]
+softpn_ndis.sys,,,2
+
+[CpyFiles_Sys_NC]
+softpn_ndis.sys,,,2
+
+[Strings]
+ManufacturerName = "Univision"
+ProviderString = "Univision"
+DiskDescription = "softpn NDIS Protocol Driver Disk"
+SOFTPN_Desc = "softpn PROFINET Layer-2 Protocol"
+SOFTPN_HelpText = "Raw Ethernet access for the softpn PROFINET device (EtherTypes 0x8892, 0x88CC)"
