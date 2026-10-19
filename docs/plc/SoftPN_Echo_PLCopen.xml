@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SoftPN echo test over PROFINET - CODESYS test code (32-byte modules).
+     Import: select "Application" in the device tree, Project -> Import PLCopenXML..., this file.
+     Delete the existing PLC_PRG first, otherwise CODESYS imports this one as PLC_PRG_1 (then let MainTask call it).
+     abIn / abOut have NO AT address: map them in the I/O mapping (the PROFINET modules do not start at %IB0 / %QB0;
+     %IB0..2 hold IOPS status bytes 16#80):
+       Input_32_bytes_PC_to_PLC_  -> PNIO Module I/O Mapping -> Variable: Application.PLC_PRG.abIn
+       Output_32_bytes_PLC_to_PC_ -> PNIO Module I/O Mapping -> Variable: Application.PLC_PRG.abOut
+     (the address column then shows crossed out: the channel is mapped to an existing variable).
+     PC side: pn_device_demo with input and output size 32 writes a heartbeat into input bytes 0..3 and echoes
+     output bytes 4..31 into input bytes 4..31. Procedure: docs/HANDOFF-profinet-codesys.md. -->
+<project xmlns="http://www.plcopen.org/xml/tc6_0200">
+  <fileHeader companyName="Univision" productName="CODESYS" productVersion="CODESYS V3.5 SP22 Patch 4" creationDateTime="2026-10-19T14:30:00" />
+  <contentHeader name="SoftPN_Echo" modificationDateTime="2026-10-19T14:30:00">
+    <coordinateInfo>
+      <fbd><scaling x="1" y="1" /></fbd>
+      <ld><scaling x="1" y="1" /></ld>
+      <sfc><scaling x="1" y="1" /></sfc>
+    </coordinateInfo>
+  </contentHeader>
+  <types>
+    <dataTypes />
+    <pous>
+      <pou name="PLC_PRG" pouType="program">
+        <interface>
+          <localVars>
+            <variable name="abOut">
+              <type><array><dimension lower="0" upper="31" /><baseType><BYTE /></baseType></array></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">PLC -&gt; PC (Output 32 bytes): map in the module's I/O mapping, no AT</xhtml></documentation>
+            </variable>
+            <variable name="abIn">
+              <type><array><dimension lower="0" upper="31" /><baseType><BYTE /></baseType></array></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">PC -&gt; PLC (Input 32 bytes): map in the module's I/O mapping, no AT</xhtml></documentation>
+            </variable>
+            <variable name="tPattern"><type><derived name="TON" /></type></variable>
+            <variable name="bPattern">
+              <type><BYTE /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">new pattern every 500 ms</xhtml></documentation>
+            </variable>
+            <variable name="i"><type><INT /></type></variable>
+            <variable name="dwHeartbeat">
+              <type><DWORD /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">PC heartbeat, input bytes 0..3 (little-endian)</xhtml></documentation>
+            </variable>
+            <variable name="dwLastBeat"><type><DWORD /></type></variable>
+            <variable name="tSecond"><type><derived name="TON" /></type></variable>
+            <variable name="bHeartbeatOk">
+              <type><BOOL /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">TRUE = the heartbeat changed during the last second: the PC is alive</xhtml></documentation>
+            </variable>
+            <variable name="bEcho">
+              <type><BOOL /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">TRUE = input bytes 4..31 equal output bytes 4..31</xhtml></documentation>
+            </variable>
+            <variable name="nEchoOk"><type><UDINT /></type></variable>
+            <variable name="nEchoBad">
+              <type><UDINT /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">small: one or two cycles of lag after each pattern change</xhtml></documentation>
+            </variable>
+          </localVars>
+        </interface>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">// 1. write a pattern that changes every 500 ms into output bytes 4..31
+tPattern(IN := NOT tPattern.Q, PT := T#500MS);
+IF tPattern.Q THEN
+    bPattern := bPattern + 1;
+END_IF
+FOR i := 4 TO 31 DO
+    abOut[i] := bPattern + INT_TO_BYTE(i);
+END_FOR
+
+// 2. heartbeat counter written by the PC (input bytes 0..3, little-endian); must change every second
+dwHeartbeat := SHL(BYTE_TO_DWORD(abIn[3]), 24) OR SHL(BYTE_TO_DWORD(abIn[2]), 16)
+            OR SHL(BYTE_TO_DWORD(abIn[1]), 8) OR BYTE_TO_DWORD(abIn[0]);
+tSecond(IN := NOT tSecond.Q, PT := T#1S);
+IF tSecond.Q THEN
+    bHeartbeatOk := dwHeartbeat &lt;&gt; dwLastBeat;
+    dwLastBeat := dwHeartbeat;
+END_IF
+
+// 3. echo check: the PC copies our bytes 4..31 back
+bEcho := TRUE;
+FOR i := 4 TO 31 DO
+    IF abIn[i] &lt;&gt; abOut[i] THEN
+        bEcho := FALSE;
+    END_IF
+END_FOR
+IF bEcho THEN
+    nEchoOk := nEchoOk + 1;
+ELSE
+    nEchoBad := nEchoBad + 1;
+END_IF</xhtml>
+          </ST>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances>
+    <configurations />
+  </instances>
+</project>

@@ -52,7 +52,7 @@ before stopping the user's ones.
 | Device binary | `build/vs2026/bin/Release/pn_device_demo.exe` (or the test kit: `pwsh tools/pack_profinet_test.ps1 -Build`) |
 | Diagnostics | `pn_probe --list`, `pn_probe --adapter Ethernet --identify` |
 | Runbook (general) | [profinet-test-runbook.md](profinet-test-runbook.md) - sections 0-4, 6, 8 apply |
-| Reusable PLC code | `E:\PLC\testeip\PLC_PRG_PLCopen.xml` / `PLC_PRG.st` on 10.0.0.128: echo + heartbeat for 32/32 bytes, written for EtherNet/IP; works for PROFINET after adjusting the `AT %QB` / `%IB` addresses to the PROFINET module mapping (`pn_device_demo` echoes bytes 4..31 and writes a heartbeat in bytes 0..3, exactly like `eip_adapter_demo`) |
+| Reusable PLC code | `E:\PLC\testeip\PLC_PRG_PLCopen.xml` / `PLC_PRG.st` on 10.0.0.128: echo + heartbeat for 32/32 bytes, written for EtherNet/IP; works for PROFINET after adjusting the `AT %QB` / `%IB` addresses to the PROFINET module mapping (`pn_device_demo` echoes bytes 4..31 and writes a heartbeat in bytes 0..3, exactly like `eip_adapter_demo`). **With PROFINET `AT %IB0` is wrong** (it reads IOPS status bytes: `abIn[0..2] = 16#80`, seen 2026-10-16 and again 2026-10-19 in project `testpn`): remove the `AT` and map `Application.PLC_PRG.abIn` / `abOut` in each module's **PNIO Module I/O Mapping** tab, or copy the addresses shown there |
 
 Copy the GSDML to 10.0.0.128 (e.g. into the new project folder under `E:\PLC\`) - ask the user for the folder; they
 create the CODESYS projects themselves.
@@ -115,6 +115,61 @@ create the CODESYS projects themselves.
 Code changes for fixes: edit FieldsBus, rebuild (`cmake --build --preset vs2026-release`), run `pn_selftest`
 (must stay 107/107 PASS), regenerate the phase docs (`python tools/gen_profinet_docs.py`) if a file shown in a phase
 changed. No commit / push without the user.
+
+## Variant: device in a VM on the own NDIS driver (no Npcap), 2026-10-17
+
+Goal: the same CODESYS test, with `pn_device_demo` running in the Hyper-V VM **pndevA** on PC-PROVE on the
+`softpn_ndis` driver ([Phase 9.20](phases/profinet/Phase9.20-NdisBackend.md)) instead of Npcap. The CODESYS side needs
+no Npcap or driver change: CODESYS Control Win uses its own Ethernet access.
+
+| Item | Value |
+|---|---|
+| Device | VM `pndevA` on PC-PROVE, adapter `Ethernet 3`, MAC 00:15:5d:00:80:01, IP 192.168.184.38 (DHCP from the Default Switch) |
+| Controller | CODESYS Control Win on PC-PROVE, PROFINET controller on the host adapter **vEthernet (Default Switch)** |
+| Kit in the VM | `C:\Univision\softpn_ndis_kit` (driver installed), PROFINET tools in `pn\` |
+
+The Default Switch is an internal Hyper-V network, so the controller must use the host's vEthernet adapter, not
+the physical NIC.
+
+**Result 2026-10-18: blocked by Hyper-V.** CODESYS Control Win was set to `vEthernet (Default Switch)`
+(192.168.176.1/20, controller IP range around 192.168.184.38) and sends DCP Identify on it, but **priority-tagged**
+(802.1Q, VID 0; capture `build/test3.pcapng`). Hyper-V drops tagged frames on the way to the VM (as in the VM test
+2026-10-17), so the device receives nothing (`rx 0`) and CODESYS reports "DCP: no RealStationName".
+- Earlier assumption corrected: `tests/profinet/captures/codesys-sp22-startup-32ms.pcapng` shows CODESYS frames
+  untagged only because it was captured through Npcap on the I219, which most likely stripped the tag on receive
+  ("Packet Priority & VLAN"). CODESYS tags DCP (and probably RT) frames.
+- `Set-VMNetworkAdapter -VMName pndevA,pndevB -IeeePriorityTag On` on PC-PROVE: **no effect** (capture
+  `build/test4.pcapng`: 156 tagged Identify frames from CODESYS after a runtime restart, device still `rx 0`). Trunk
+  mode cannot help either (Hyper-V allows VLAN IDs 1-4094 only, the tag carries VID 0). **Conclusion: a CODESYS
+  controller cannot reach a softpn device in a Hyper-V VM.** The CODESYS test with the driver needs the physical
+  test PC (D4); VM tests stay VM <-> VM with `pn_controller_sim`. Set CODESYS back to the physical NIC and
+  `IeeePriorityTag Off`.
+
+Steps as tried:
+
+1. **CODESYS (PC-PROVE):**
+   - Device tree -> Ethernet adapter above the PROFINET controller -> General -> **Network interface:
+     vEthernet (Default Switch)**. Note its IP (probably `192.168.184.1`) and mask.
+   - PROFINET device -> **IP = 192.168.184.38** (pndevA's IP; softpn accepts only its own IP), same mask.
+   - Station name as in the project; modules 32/32; update time 32 ms first, then 8 ms.
+   - Download, Run.
+2. **pndevA** (nothing else may hold the adapter):
+
+   ```powershell
+   .\pn\pn_device_demo --adapter "Ethernet 3" --name <station name from CODESYS> --in-size 32 --out-size 32 --no-vlan 1
+   ```
+
+3. **Expected:** `AR: connected ...` -> `state: DataRun`, the PLC pattern in `outputs`, `aborts 0`.
+   Then repeat the checks of the Npcap test (STOP/RUN, demo restart, 30 min). Record the max TX period at 32 ms
+   and 8 ms.
+4. **Afterwards:** set the CODESYS network interface back to the physical NIC (EtherNet/IP and Npcap tests use the
+   office LAN).
+
+Notes:
+- The Default Switch subnet and the VM's DHCP address can change when PC-PROVE reboots: check both IPs.
+- CODESYS demo mode stops after 2 h.
+- Not covered by this variant: VLAN-tagged frames on a physical Intel NIC and timing against the Npcap baseline.
+  That is D4 on a separate physical test PC with test signing (the user prepares one; **not the user's dev PC**).
 
 ## Afterwards
 

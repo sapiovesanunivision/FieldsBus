@@ -127,7 +127,7 @@ data-hold watchdog (default factor 3 = 24 ms at 8 ms).
 | D1 | Toolchain: WDK install, test PC/VM with test signing + KDNET; build the **unmodified** NDISPROT sample, install, send/receive with its test tool | **done 2026-10-16**, see "D1 result" |
 | D2 | Driver changes: EtherType list + VLAN, packet filter per open, no loopback, overlapped reads, cancel, enumeration, link state, SDDL | **send side + API done 2026-10-16** (selftest 18/18 in the VM); receive test and Driver Verifier open, see "D2 result" |
 | D3 | `src/pn/l2_port_ndis.cpp` backend + build switch + fallback to Npcap; `pn_probe --list/--identify/--jitter` on it | **done 2026-10-17**, see "D3 result" |
-| D4 | Real test: CODESYS on 10.0.0.128 (procedure: [HANDOFF-profinet-codesys.md](HANDOFF-profinet-codesys.md)), then Siemens; compare timing with Npcap (`pn_probe --jitter`, demo statistics) | DataRun, `aborts 0`, timing equal or better than Npcap |
+| D4 | Real test: CODESYS on 10.0.0.128 (procedure: [HANDOFF-profinet-codesys.md](HANDOFF-profinet-codesys.md)), then Siemens; compare timing with Npcap (`pn_probe --jitter`, demo statistics) | **CODESYS passed 2026-10-19** (see "D4 result so far"); Siemens with the driver not yet tried |
 | D5 | Signing, INF/installer, docs (phase doc like `docs/phases/profinet/`), README | signed driver installs on a clean Windows 11 PC |
 
 ### D1 result (2026-10-16)
@@ -212,8 +212,51 @@ data-hold watchdog (default factor 3 = 24 ms at 8 ms).
 | Timing 8 ms (`pn_probe --jitter` / `--rx-jitter`) | TX max 8.50 ms, p99 8.41; RX gaps max 8.65 ms, p99 8.43; 0 lost; `send()` p50 16 us, p99 47 us |
 | `pn_device_demo` (B) vs `pn_controller_sim` (A), untagged (`--no-vlan 1` / `--vlan 0`) | DCP, Connect, Write, Read I&M0, PrmEnd, ApplicationReady OK; DataRun at 8 ms, 30 s: `tx 1781 rx 1780, max TX period 8511 us, late 0, aborts 0`; clean release |
 
+- **CODESYS -> VM tried 2026-10-18 (not possible):** CODESYS Control Win on PC-PROVE bound to `vEthernet (Default
+  Switch)` sends DCP Identify priority-tagged (802.1Q VID 0). Hyper-V drops it before the VM, also with
+  `IeeePriorityTag On`, so the device never sees it. Details: [HANDOFF-profinet-codesys.md](HANDOFF-profinet-codesys.md),
+  "Variant: device in a VM". CODESYS tests with the driver need the physical test PC.
+- **D4 test PC:** a separate physical PC the user prepares (test signing on, Secure Boot off, Intel NIC). **Never the
+  user's dev PC 10.0.0.168.**
+
+### D4 result so far (2026-10-19)
+
+- **Test PC:** I219-LM (`Intel(R) Ethernet Connection (11) I219-LM`), adapter `Ethernet`, e8:d8:d1:cb:1b:0f, 10.0.0.193
+  (DHCP), office LAN (switches, no direct cable). Kit installed; `softpn_ndis_test selftest 0` 18/18.
+- **Controller:** CODESYS Control Win SP22 on PC-PROVE 10.0.0.128 (physical NIC), station name `softpn-dev1`, 32/32 bytes.
+- **32 ms, VLAN tags on (default):** DataRun 87 ms after Connect.
+  - Undisturbed run of about 26 min: `tx 48736 rx 48733, max TX period 35625 us, late 0, ARs 1, aborts 0`.
+  - Npcap baseline: 30 min, max 33.6 ms over 6 min, 0 aborts.
+- **12 aborts in an earlier session** (`RTA ERR CF 81 3F 05` from CODESYS; reason 0x05 = consumer data-hold timer
+  expired). They came from downloads / online changes in CODESYS while mapping the I/O; none in the undisturbed run.
+- **PLC program:** `AT %IB0` is wrong with PROFINET (reads IOPS 16#80). Use `docs/plc/SoftPN_Echo_PLCopen.xml`
+  (no `AT`) + the I/O mapping. Echo OK; `nEchoBad` about 6 % = round-trip lag after each 500 ms pattern change.
+- **8 ms (data hold 80 ms), VLAN tags on:** undisturbed run of about 19 min:
+  `tx 141148 rx 141136, max TX period 11296 us, late 0, ARs 1, aborts 0`.
+  - First verification of the PoC's 8 ms / data-hold-factor target against a real controller.
+  - With Npcap it was only measured on the WSL test bed, where it could not be verified.
+- **STOP/RUN (3x at 8 ms):**
+  - CODESYS Control Win stops the cyclic data in STOP, so the device's data-hold timer ends the AR (once CODESYS
+    sent an RTA abort instead).
+  - After RUN, CODESYS reconnects by itself within 1-4 s, DataRun about 50 ms after Connect.
+  - Same behaviour as with Npcap.
+- **Demo restart (Ctrl+C, start again):** CODESYS reconnects by itself, device green.
+- **VLAN on receive:** the I219 setting is "Packet Priority & VLAN **Enabled**" (Intel default).
+  - `softpn_ndis_test recv 0 --vlan` during CODESYS's DCP search: 24 Identify frames, all **untagged** (60 bytes),
+    `vlan re-inserted 0`.
+  - CODESYS sends them tagged (VID 0, seen on vEthernet). The tag is removed before the driver (by the NIC or the
+    office switch) without OOB 802.1Q information, so there is nothing to re-insert.
+  - softpn parses frames with and without the tag, so this does not matter for the device.
+  - The re-insert path (OOB info with priority/VID != 0) is still untested on hardware. Optional test: set the
+    I219 to "Packet Priority & VLAN Disabled" and check that the tag arrives inline.
+- **Minor:** `softpn_ndis_test recv` can miss the frame that completes just as its last read is cancelled at the
+  end of the run (tool shows 22, driver delivered 24). Test-tool only.
+
+**D4 result: passed.** CODESYS ↔ `pn_device_demo` on `softpn_ndis.sys` (no Npcap) on a physical I219 over the
+office LAN: 32 ms and 8 ms with 0 aborts in undisturbed runs, STOP/RUN and restart recover automatically.
+Remaining for a product: D5 (signing route, installer, coexistence with Npcap), Driver Verifier run.
 - **Open:**
-  - VLAN-tagged frames on a physical NIC (D4);
+  - VLAN-tagged frames on a physical NIC (D4); CODESYS tags DCP frames, so this is required, not optional;
   - Driver Verifier run with a kernel debugger;
   - phase doc `Phase9.20-NdisBackend.md` + `gen_profinet_docs.py` entry;
   - D4 with CODESYS on a physical PC.

@@ -64,6 +64,23 @@ Asked the user to check, in this order (no answer yet):
 4. Delete the port interconnection in the Topology view (or partner "any").
 5. Wireshark on the device PC during STOP->RUN, filter `pn_dcp || lldp` (+ the demo console output).
 
+### Update 2026-10-17 (log `build/pow_log_1.txt`, old kit of 2026-10-15)
+
+- Without `--promisc 1`: stats 0, as before. **With `--promisc 1` the S7 finds the device and connects**
+  (`plcxb1d0ed`, 28:63:36:83:f9:9e, 192.168.10.1 -> device 192.168.10.10, 16 ms, C_SDU 40/40, output FrameID 0x8002,
+  no ModuleDiff). So the old kit lacked ALL_MULTICAST.
+- Then a loop: `AR: WaitPrmEnd`, and about 4.6 s later a new Connect with the same ARUUID (`aborts` +1), 52 times.
+  `rx 0` the whole time: the S7 never sends output frames, no PrmEnd, no RTA ERR. So the S7 **does not accept
+  our Connect response** (or does not receive it). Writes/Reads were not logged, so we can't tell if any came.
+- Changes (selftest 112/112, kit `softpn-testkit-20261017.zip` sent to the user):
+  1. ARBlockRes `CMResponderUDPRTPort` = 0x8892 (was the RPC port 0x8894). This is the main suspect.
+  2. RPC socket bound to the NIC IP (it was INADDR_ANY): if the PC has a second NIC/IP in 192.168.10.x, replies
+     could leave with the wrong source IP.
+  3. Console now logs every record Write/Read (slot, subslot, index, status), refused Control blocks and rejected RPC calls.
+- If the loop persists: Wireshark capture (filter `pn_dcp || pn_io || pn_rt || dcerpc || lldp || arp`) during one
+  Connect cycle, plus `ipconfig /all` of the device PC. Then check the ARServerBlock (S7-1500 uses Advanced startup,
+  GSDML has `StartupMode="Advanced;Legacy"`) and the RPC response header.
+
 ## Code facts relevant for Siemens
 
 | Topic | Behaviour | Where |
