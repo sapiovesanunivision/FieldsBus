@@ -129,10 +129,21 @@ Driver `BD0DD16AE9FB` + tools `softpn-testkit-20261020`, PROFINET over the new p
 No bugcheck, no leak (about 225,000 allocations, current count flat). 4 / 1,580 is twice the earlier 2 / 790 because
 the driver now has two bindings (Ethernet 3 and PN).
 
+## D4 repeat with the fixed build (2026-10-21)
+
+Physical test PC 10.0.0.193 (Intel I219-LM, test mode) with CODESYS Control Win on PC-PROVE as the PROFINET
+controller, 8 ms, kit `softpn-ndis-siemens-kit-20261021`:
+
+- The run before the update still had the old driver (`302C39AF7DD0`, 2026-10-16): DataRun, aborts 0, max TX period
+  10.7 ms after 2 min.
+- Driver updated with `update.cmd`: installed image `BD0DD16AE9FB` (checked via the service ImagePath in the
+  DriverStore), selftest ALL PASS.
+- **Result:** `tx 334905 rx 334888, max TX period 11537 us, late 0, ARs 1, aborts 0`. That is about 45 min at 8 ms
+  without an abort, and the max TX period equals the old D4 (11.3 ms). **D4 passed with the fixed build.**
+
 ## Remaining
 
-- `verifier /reset` and reboot pndevA.
-- Repeat D4 (CODESYS, physical I219 test PC) with the fixed driver and tools.
+- Done 2026-10-21: `verifier /reset` and reboot in pndevA.
 - Optional second pass (low-resources simulation, NDIS/WIFI verification), only after a clean standard pass.
 
 ## Test-bed notes found on the way

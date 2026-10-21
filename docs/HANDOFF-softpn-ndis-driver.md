@@ -270,7 +270,8 @@ the way:
   EtherType"). It now lists 0x8892, 0x88CC, 0x88B5 and 802.1Q.
 - **Backend:** `l2_port_ndis.cpp` now reopens the adapter after an unbind.
 
-**D4 should be repeated with the fixed build.** Details:
+**D4 repeated with the fixed build (2026-10-21):** test PC 10.0.0.193 (I219-LM) vs CODESYS, 8 ms, about 45 min,
+`tx 334905 rx 334888, max TX period 11537 us, late 0, aborts 0`. Details:
 [softpn-driver-verifier-report.md](softpn-driver-verifier-report.md).
 
 Optional later: cyclic transmit scheduled in the driver (kernel timer) if user-mode jitter limits the 8 ms /
