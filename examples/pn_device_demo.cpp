@@ -3,11 +3,12 @@
 //
 // Usage: pn_device_demo --adapter <name|mac|ip> [--name softpn-device] [--in-size 32] [--out-size 32]
 //                       [--min-update-ms 8] [--no-vlan 1] [--promisc 0|1] [--priority 0|1] [--persist softpn.ini]
-//                       [--backend auto|npcap|ndis]
+//                       [--backend auto|npcap|ndis] [--device-id 1]
 //        pn_device_demo --list
 //
 // In the PLC project: GSDML gsdml/GSDML-V2.43-Univision-SoftPN-*.xml, slot 1 "Input <in-size> bytes",
 // slot 2 "Output <out-size> bytes", NameOfStation = --name, IP = the IP of the NIC.
+// With the ProInspect GSDML (GSDML-V2.43-Univision-ProInspect-*.xml): --device-id 2 --in-size 256 --out-size 256.
 #include "softpn/pn_device.hpp"
 
 #include <atomic>
@@ -74,6 +75,7 @@ int main(int argc, char** argv)
         else if (k == "--promisc") cfg.promiscuous = n != 0;
         else if (k == "--priority") cfg.raiseThreadPriority = n != 0;
         else if (k == "--persist") cfg.persistPath = v;
+        else if (k == "--device-id") cfg.deviceId = uint16_t(n);
         else if (k == "--backend") {
             if (!softpn::parseL2Backend(v, cfg.l2Backend)) {
                 std::fprintf(stderr, "--backend: auto, npcap or ndis\n");

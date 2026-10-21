@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GSDML for ProInspectProcessImageSoftFieldbusService with Transport=profinet (Univision softpn),
+  Conformance Class A, RT_CLASS_1.
+
+  - VendorID 0xFFFF is a PLACEHOLDER (as in GSDML-V2.43-Univision-SoftPN-*.xml). Replace it, together with the
+    service's Parameters\profinet\VendorId, with the PI vendor ID assigned to Univision before any use outside the lab.
+  - DeviceID 0x0002 = service Parameters\profinet\DeviceId (default 2). The generic SoftPN device is 0x0001.
+  - Module ident numbers = src/pn/pn_model.cpp (256-byte variants); pn_selftest checks this file.
+  - Validate with the PI GSDML Checker after every change.
+
+  Slot 1: "Input 256 bytes (PC to PLC)"  - bytes 0..251 = HilscherProcessImageOutputData, 252..255 = 0
+  Slot 2: "Output 256 bytes (PLC to PC)" - bytes 0..111 = HilscherProcessImageInputData, 112..255 unused
+  Byte order of WORD / DWORD / REAL: the service's Parameters\profinet\ByteOrder (default big = Siemens).
+-->
+<ISO15745Profile xmlns="http://www.profibus.com/GSDML/2003/11/DeviceProfile"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="http://www.profibus.com/GSDML/2003/11/DeviceProfile ..\xsd\GSDML-DeviceProfile-V2.43.xsd">
+  <ProfileHeader>
+    <ProfileIdentification>PROFINET Device Profile</ProfileIdentification>
+    <ProfileRevision>1.00</ProfileRevision>
+    <ProfileName>Device Profile for PROFINET Devices</ProfileName>
+    <ProfileSource>PROFIBUS Nutzerorganisation e. V. (PNO)</ProfileSource>
+    <ProfileClassID>Device</ProfileClassID>
+    <ISO15745Reference>
+      <ISO15745Part>4</ISO15745Part>
+      <ISO15745Edition>1</ISO15745Edition>
+      <ProfileTechnology>GSDML</ProfileTechnology>
+    </ISO15745Reference>
+  </ProfileHeader>
+  <ProfileBody>
+    <DeviceIdentity VendorID="0xFFFF" DeviceID="0x0002">
+      <InfoText TextId="T_DeviceInfo"/>
+      <VendorName Value="Univision"/>
+    </DeviceIdentity>
+    <DeviceFunction>
+      <Family MainFamily="Ident Systems" ProductFamily="ProInspect"/>
+    </DeviceFunction>
+    <ApplicationProcess>
+      <DeviceAccessPointList>
+        <DeviceAccessPointItem ID="DAP1" PhysicalSlots="0..2" ModuleIdentNumber="0x00000001"
+                               MinDeviceInterval="256" ImplementationType="Software"
+                               DNS_CompatibleName="proinspect" FixedInSlots="0" ObjectUUID_LocalIndex="1"
+                               RequiredSchemaVersion="V2.4" MultipleWriteSupported="true"
+                               PNIO_Version="V2.43" DeviceAccessSupported="false"
+                               CheckDeviceID_Allowed="true" LLDP_NoD_Supported="true" ResetToFactoryModes="2"
+                               NameOfStationNotTransferable="false">
+          <ModuleInfo>
+            <Name TextId="T_DAP_Name"/>
+            <InfoText TextId="T_DAP_Info"/>
+            <VendorName Value="Univision"/>
+            <OrderNumber Value="PROINSPECT-SFB-PN"/>
+            <HardwareRelease Value="1"/>
+            <SoftwareRelease Value="V1.0.0"/>
+          </ModuleInfo>
+          <CertificationInfo ConformanceClass="A" ApplicationClass="" NetloadClass="I"/>
+          <IOConfigData MaxInputLength="1440" MaxOutputLength="1440"/>
+          <UseableModules>
+            <!-- FixedInSlots: inserted automatically when the device is added, cannot be removed or replaced -->
+            <ModuleItemRef ModuleItemTarget="IN256" AllowedInSlots="1" FixedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="OUT256" AllowedInSlots="2" FixedInSlots="2"/>
+          </UseableModules>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="DAP1_SUB" SubmoduleIdentNumber="0x00000001" FixedInSubslots="1"
+                                  MayIssueProcessAlarm="false">
+              <IOData/>
+              <ModuleInfo>
+                <Name TextId="T_DAP_Name"/>
+                <InfoText TextId="T_DAP_Info"/>
+              </ModuleInfo>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+          <SystemDefinedSubmoduleList>
+            <InterfaceSubmoduleItem ID="IF1" SubslotNumber="32768" SubmoduleIdentNumber="0x00008000"
+                                    TextId="T_Interface" SupportedRT_Classes="RT_CLASS_1"
+                                    SupportedProtocols="LLDP" DCP_HelloSupported="false"
+                                    PTP_BoundarySupported="true" DCP_BoundarySupported="true">
+              <ApplicationRelations StartupMode="Advanced;Legacy">
+                <!-- ReductionRatio: RT_CLASS_1 needs the full list 1..512 (TIA check 0x00010030_4), explicit
+                     (check 0x00020020_16). Update times below 8 ms are excluded by MinDeviceInterval="256". -->
+                <TimingProperties SendClock="32" ReductionRatio="1 2 4 8 16 32 64 128 256 512"/>
+              </ApplicationRelations>
+            </InterfaceSubmoduleItem>
+            <PortSubmoduleItem ID="PORT1" SubslotNumber="32769" SubmoduleIdentNumber="0x00008001"
+                               TextId="T_Port1" MaxPortRxDelay="350" MaxPortTxDelay="160">
+              <MAUTypeList>
+                <MAUTypeItem Value="16"/>
+                <MAUTypeItem Value="30"/>
+              </MAUTypeList>
+            </PortSubmoduleItem>
+          </SystemDefinedSubmoduleList>
+        </DeviceAccessPointItem>
+      </DeviceAccessPointList>
+      <ModuleList>
+      <ModuleItem ID="IN256" ModuleIdentNumber="0x00000014">
+        <ModuleInfo>
+          <Name TextId="T_IN256"/>
+          <InfoText TextId="T_IN_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="IN256_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Input Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="256" TextId="T_IN_Data"/>
+              </Input>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_IN256"/>
+              <InfoText TextId="T_IN_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      <ModuleItem ID="OUT256" ModuleIdentNumber="0x00000024">
+        <ModuleInfo>
+          <Name TextId="T_OUT256"/>
+          <InfoText TextId="T_OUT_Info"/>
+        </ModuleInfo>
+        <VirtualSubmoduleList>
+          <VirtualSubmoduleItem ID="OUT256_SUB" SubmoduleIdentNumber="0x00000001" MayIssueProcessAlarm="false">
+            <IOData>
+              <Output Consistency="All items consistency">
+                <DataItem DataType="OctetString" Length="256" TextId="T_OUT_Data"/>
+              </Output>
+            </IOData>
+            <ModuleInfo>
+              <Name TextId="T_OUT256"/>
+              <InfoText TextId="T_OUT_Info"/>
+            </ModuleInfo>
+          </VirtualSubmoduleItem>
+        </VirtualSubmoduleList>
+      </ModuleItem>
+      </ModuleList>
+      <ExternalTextList>
+        <PrimaryLanguage>
+          <Text TextId="T_DeviceInfo" Value="ProInspect process image over PROFINET (ProInspectProcessImageSoftFieldbusService, PC with a standard NIC)"/>
+          <Text TextId="T_DAP_Name" Value="ProInspect SoftFieldbus"/>
+          <Text TextId="T_DAP_Info" Value="ProInspect process image, update time 8 ms or more. Same layout as the EtherNet/IP assemblies 100 / 150"/>
+          <Text TextId="T_Interface" Value="X1"/>
+          <Text TextId="T_Port1" Value="X1 P1"/>
+          <Text TextId="T_IN_Info" Value="PC to PLC: bytes 0..251 = process image (packetId, recipe, view status and results, measurements, outputs), 252..255 = 0"/>
+          <Text TextId="T_OUT_Info" Value="PLC to PC: bytes 0..111 = process image (view control, recipe, recipeId, inputs, handled parts), 112..255 unused"/>
+          <Text TextId="T_IN_Data" Value="Input data"/>
+          <Text TextId="T_OUT_Data" Value="Output data"/>
+          <Text TextId="T_IN256" Value="Input 256 bytes (PC to PLC)"/>
+          <Text TextId="T_OUT256" Value="Output 256 bytes (PLC to PC)"/>
+        </PrimaryLanguage>
+      </ExternalTextList>
+    </ApplicationProcess>
+  </ProfileBody>
+</ISO15745Profile>

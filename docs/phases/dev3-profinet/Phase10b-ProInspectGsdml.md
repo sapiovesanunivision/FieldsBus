@@ -1,7 +1,8 @@
 # Phase 10b: GSDML for the ProInspect service
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **FieldsBus**,
-> branch `feature/profinet-poc`. Status: planned, not built.
+> branch `feature/profinet-poc`. **Status: implemented 2026-10-21** (uncommitted); the GSDML file was written
+> from the block below, byte for byte. Import into TIA / CODESYS still open (step 10b.4).
 
 ## Goal
 Give the process-image service its own PROFINET device description, "ProInspect SoftFieldbus" (DeviceID 0x0002).
@@ -295,11 +296,18 @@ The engineering tools are stricter than the self-test: TIA refused the first Sof
 
 ## Verification Checklist
 
-- [ ] The file is well-formed XML (opens in a browser)
-- [ ] `pn_selftest`: 129/129, section "ProInspect GSDML" not skipped
-- [ ] TIA Portal installs the file; the device has both modules fixed
-- [ ] CODESYS installs the file; the device has both modules fixed
-- [ ] The SoftPN GSDML is unchanged (`git diff gsdml/GSDML-V2.43-Univision-SoftPN-20261013.xml` is empty)
+Results 2026-10-21, dev PC:
+
+- [x] The file is well-formed XML (parsed with .NET `XmlDocument`); UTF-8 without BOM, LF, as the SoftPN GSDML
+- [x] `pn_selftest`: **129/129 PASS**, section "ProInspect GSDML" not skipped
+- [x] Negative check: `--gsdml-proinspect` pointed at the SoftPN GSDML -> 11 failures (8 sizes that must be absent,
+      DeviceID, the two fixed slots), RESULT FAIL
+- [x] `vs2026-analyze-debug`: 0 warnings
+- [ ] TIA Portal installs the file; the device has both modules fixed (needs the Siemens test bed)
+- [x] CODESYS installs the file; the device has both modules fixed (Control Win V3 x64 on 10.0.0.128, 2026-10-21:
+      device "ProInspect_SoftFieldbus" under PN_Controller with Input_256_bytes_PC_to_PLC_ / Output_256_bytes_PLC_to_PC_
+      inserted automatically)
+- [x] The SoftPN GSDML is unchanged
 
 ---
 

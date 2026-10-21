@@ -210,7 +210,8 @@ if(SOFTPN_ENABLED)
     add_executable(pn_selftest tools/pn_selftest.cpp)
     target_link_libraries(pn_selftest PRIVATE pn_controller)
     target_compile_definitions(pn_selftest PRIVATE
-        SOFTPN_DEFAULT_GSDML="${CMAKE_CURRENT_SOURCE_DIR}/gsdml/GSDML-V2.43-Univision-SoftPN-20261013.xml")
+        SOFTPN_DEFAULT_GSDML="${CMAKE_CURRENT_SOURCE_DIR}/gsdml/GSDML-V2.43-Univision-SoftPN-20261013.xml"
+        SOFTPN_PROINSPECT_GSDML="${CMAKE_CURRENT_SOURCE_DIR}/gsdml/GSDML-V2.43-Univision-ProInspect-20261021.xml")
     softeip_warnings(pn_selftest)
     enable_testing()
     add_test(NAME pn_selftest COMMAND pn_selftest)

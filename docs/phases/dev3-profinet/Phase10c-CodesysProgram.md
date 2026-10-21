@@ -1,7 +1,8 @@
 # Phase 10c: CODESYS PLC program
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **FieldsBus**,
-> branch `feature/profinet-poc`. Status: planned, not tested on a PLC.
+> branch `feature/profinet-poc`. **Status: files written 2026-10-21** (uncommitted) from the blocks below, byte
+> for byte. Not yet imported into CODESYS.
 
 ## Goal
 The PROFINET counterpart of `docs/plc/ProInspectEip.st` / `ProInspectEip_PLCopen.xml`: the same DUTs and test logic,
@@ -456,9 +457,22 @@ END_FOR</xhtml>
 
 ## Verification Checklist
 
-- [ ] `ProInspectPn_PLCopen.xml` is well-formed XML (opens in a browser)
-- [ ] CODESYS: Import PLCopenXML creates 5 DUTs and PLC_PRG without errors; Build (F11) with 0 errors
-- [ ] Watch: `bLayoutOk` = TRUE right after Login (without the PC)
+Results 2026-10-21 (static checks on the dev PC):
+
+- [x] `ProInspectPn_PLCopen.xml` is well-formed XML; 5 DUTs, PLC_PRG with 17 variables
+- [x] The ST code inside the XML is identical to `ProInspectPn.st` (compared after XML unescaping)
+- [x] The DUT members are identical to `ProInspectEip.st` (24 members): same layout as EtherNet/IP
+- [x] UTF-8 without BOM, LF, as the EtherNet/IP files
+- [x] CODESYS: Import PLCopenXML creates 5 DUTs and PLC_PRG without errors; builds and runs (Control Win V3 x64 on
+      10.0.0.128, project ProcessImagePn, 2026-10-21)
+- [x] Watch: `bLayoutOk` = TRUE right after Login (without the PC)
+- [x] Connection test without the service (2026-10-21): `pn_device_demo --adapter Ethernet --name proinspect
+      --in-size 256 --out-size 256 --device-id 2 --backend npcap` on the dev PC (10.0.0.168) vs CODESYS Control Win
+      (10.0.0.128) with the ProInspect GSDML: **DataRun** at 32 ms, C_SDU 261/261 bytes, write 0x8071 OK,
+      ApplicationReady; tx 5705 / rx 5699, max TX period 34.7 ms, late 0. PLC -> PC bytes 0..2 as the program
+      writes them (appTag +1 every 2 s little-endian, acquisitionControl 1). One controller abort `CF 81 FD 11`
+      with reconnect after 11 s (during the download). The demo echoes data, so `bPcAlive` / `bByteOrderOk` are not
+      meaningful here (`--device-id` added to `pn_device_demo` for this test)
 - [ ] 10j: with the service running and `ByteOrder=little`: `bPcAlive`, `bByteOrderOk` TRUE; console key `o` shows
       recipeId 1234; with `big`, `bByteOrderOk` FALSE and recipeId 3523477504 (0xD2040000)
 

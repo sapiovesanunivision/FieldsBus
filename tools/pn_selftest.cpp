@@ -1,12 +1,14 @@
 // Offline tests of the softpn PROFINET stack: no NIC, no Npcap, no PLC needed.
 //
 //  1. codec tests: DCP, NameOfStation rules, RPC header (both byte orders), NDR, blocks, I&M0
-//  2. GSDML check: the module ident numbers in the GSDML match the device model (pn_model.cpp)
+//  2. GSDML check: the module ident numbers in the GSDML match the device model (pn_model.cpp);
+//     the ProInspect GSDML (process-image service) has only the 256-byte modules, fixed in slots 1 and 2
 //  3. end-to-end: softpn::Device and ControllerSim joined by an in-memory cable (RPC over
 //     UDP loopback): identify, set name, connect, records, PrmEnd/ApplicationReady, cyclic echo,
 //     release, and the error paths (wrong module, update time too fast, second AR, watchdog)
 //
-// Usage: pn_selftest [--gsdml path/to/GSDML.xml]     prints RESULT: PASS / FAIL
+// Usage: pn_selftest [--gsdml path/to/GSDML.xml] [--gsdml-proinspect path/to/ProInspect GSDML.xml]
+//        prints RESULT: PASS / FAIL
 #include "pn_controller.hpp"
 
 #include "softpn/pn_device.hpp"
@@ -278,6 +280,37 @@ void testGsdml(const std::string& path)
     CHECK(has("VendorID=\"0xFFFF\"") && has("DeviceID=\"0x0001\""));
 }
 
+void testProInspectGsdml(const std::string& path)
+{
+    section("ProInspect GSDML");
+    std::ifstream f(path);
+    if (!f) {
+        std::printf("  skipped: %s not found (pass --gsdml-proinspect)\n", path.c_str());
+        return;
+    }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string xml = ss.str();
+    auto has = [&](const std::string& s) { return xml.find(s) != std::string::npos; };
+    char buf[64];
+    // only the 256-byte modules: the service always runs with 256 / 256 bytes
+    for (const ModuleVariant& v : moduleVariants()) {
+        const bool used = v.bytes == 256;
+        std::snprintf(buf, sizeof buf, "ModuleIdentNumber=\"0x%08X\"", v.inputModuleIdent);
+        CHECK(has(buf) == used);
+        std::snprintf(buf, sizeof buf, "ModuleIdentNumber=\"0x%08X\"", v.outputModuleIdent);
+        CHECK(has(buf) == used);
+    }
+    CHECK(has("Length=\"256\""));
+    std::snprintf(buf, sizeof buf, "ModuleIdentNumber=\"0x%08X\"", kDapModuleIdent);
+    CHECK(has(buf));
+    CHECK(has("SubmoduleIdentNumber=\"0x00008000\""));
+    CHECK(has("SubmoduleIdentNumber=\"0x00008001\""));
+    CHECK(has("VendorID=\"0xFFFF\"") && has("DeviceID=\"0x0002\""));
+    CHECK(has("ModuleItemTarget=\"IN256\" AllowedInSlots=\"1\" FixedInSlots=\"1\""));
+    CHECK(has("ModuleItemTarget=\"OUT256\" AllowedInSlots=\"2\" FixedInSlots=\"2\""));
+}
+
 // ---- 3. end-to-end -------------------------------------------------------------------------------
 
 struct Rig {
@@ -481,11 +514,14 @@ int main(int argc, char** argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep the output if a test crashes
     std::string gsdml = SOFTPN_DEFAULT_GSDML;
+    std::string gsdmlProInspect = SOFTPN_PROINSPECT_GSDML;
     bool verbose = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--gsdml" && i + 1 < argc)
             gsdml = argv[++i];
+        else if (a == "--gsdml-proinspect" && i + 1 < argc)
+            gsdmlProInspect = argv[++i];
         else if (a == "--verbose")
             verbose = true;
     }
@@ -495,6 +531,7 @@ int main(int argc, char** argv)
     testBlocks();
     testLldp();
     testGsdml(gsdml);
+    testProInspectGsdml(gsdmlProInspect);
     testHappyPath(verbose);
     testErrorPaths(verbose);
     std::printf("%d checks, %d failed\nRESULT: %s\n", g_checks, g_failures, g_failures == 0 ? "PASS" : "FAIL");
