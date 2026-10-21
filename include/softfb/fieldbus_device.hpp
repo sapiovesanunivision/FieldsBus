@@ -38,7 +38,7 @@ enum class Transport {
     ModbusTcp,
     ModbusUdp,
     ModbusTcpUdp, // one slave answering on both TCP and UDP
-    ProfinetRt,   // PROFINET RT IO-Device (softpn; on Windows the build needs the Npcap SDK)
+    ProfinetRt,   // PROFINET RT IO-Device (softpn; Windows: softpn_ndis driver or Npcap, see ProfinetOptions::l2Backend)
 };
 
 enum class DeviceState {
@@ -81,6 +81,9 @@ struct DeviceConfig {
         uint32_t minUpdateTimeMs = 8;
         bool sendVlanTag = true;
         bool promiscuous = false; // only if CODESYS / Proneta cannot find the device (see softpn::L2Options)
+        // Windows raw-Ethernet backend: "auto" (SOFTPN_L2_BACKEND if set, else the softpn_ndis driver if it is
+        // running, else Npcap), "ndis" or "npcap". Linux ignores it.
+        std::string l2Backend = "auto";
     } profinet;
 
     // Callbacks run on the network thread; keep them short.

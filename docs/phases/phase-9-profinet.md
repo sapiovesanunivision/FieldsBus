@@ -133,6 +133,6 @@ the Windows periodic timer ticked every ~1.5 ms. Repeat on the station PC and NI
 - [ ] Siemens S7-1200/1500 test by a colleague: [softpn-siemens-setup.md](../softpn-siemens-setup.md) (in the test kit)
 - [ ] GSDML through the PI GSDML Checker
 - [ ] Test 1 (CODESYS Control Win SL on 10.0.0.128, office LAN) and test 2 (CMZ PLC): [profinet-test-runbook.md](../profinet-test-runbook.md), kit `tools/pack_profinet_test.ps1`
-- [ ] Dev.3 process-image service with `Transport=profinet`: prepared in [Phase 9.19](profinet/Phase9.19-Dev3ProcessImageService.md), to apply when Dev.3 is free (`sync-to-dev3.ps1` already mirrors softpn)
+- [ ] Dev.3 process-image service with `Transport=profinet` and a byte order for every transport: [Phase 10](phase-10-dev3-profinet.md) (replaces Phase 9.19)
 - [ ] README / PLAN / HANDOFF sections for PROFINET
 - [ ] Management: Npcap OEM vs Hilscher vs NDISPROT driver; PI vendor ID if the product goes ahead

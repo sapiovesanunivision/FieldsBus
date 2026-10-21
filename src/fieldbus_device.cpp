@@ -120,6 +120,11 @@ bool FieldbusDevice::start(std::string* error)
         p.minUpdateTimeMs = c.profinet.minUpdateTimeMs;
         p.sendVlanTag = c.profinet.sendVlanTag;
         p.promiscuous = c.profinet.promiscuous;
+        if (!softpn::parseL2Backend(c.profinet.l2Backend, p.l2Backend)) {
+            if (error)
+                *error = "unknown PROFINET L2 backend '" + c.profinet.l2Backend + "' (auto, ndis, npcap)";
+            return false;
+        }
         // PROFINET names data from the device's view, like CIP: "input" = to the PLC.
         p.inputSize = c.outputSize;
         p.outputSize = c.inputSize;
@@ -144,7 +149,7 @@ bool FieldbusDevice::start(std::string* error)
         }
 #else
         if (error)
-            *error = "this build has no PROFINET support (configure CMake with SOFTPN_NPCAP_SDK)";
+            *error = "this build has no PROFINET support (softpn is built on Windows and Linux only)";
         return false;
 #endif
     } else {

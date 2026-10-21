@@ -76,6 +76,8 @@ softfb::DeviceConfig toNative(FieldbusDeviceConfig^ c)
     n.profinet.minUpdateTimeMs = uint32_t(checkRange(c->ProfinetMinUpdateTimeMs, 1, 512, "ProfinetMinUpdateTimeMs"));
     n.profinet.sendVlanTag = c->ProfinetSendVlanTag;
     n.profinet.promiscuous = c->ProfinetPromiscuous;
+    if (c->ProfinetL2Backend != nullptr)
+        n.profinet.l2Backend = toStd(c->ProfinetL2Backend);
     return n;
 }
 
@@ -142,6 +144,7 @@ FieldbusDeviceConfig::FieldbusDeviceConfig()
     ProfinetMinUpdateTimeMs = int(d.profinet.minUpdateTimeMs);
     ProfinetSendVlanTag = d.profinet.sendVlanTag;
     ProfinetPromiscuous = d.profinet.promiscuous;
+    ProfinetL2Backend = gcnew String(d.profinet.l2Backend.c_str());
 }
 
 // ---------------------------------------------------------------------------

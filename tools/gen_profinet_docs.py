@@ -831,8 +831,9 @@ D3INST = 'Dev/Applicazioni/ProInspect/ProVision/Sources/Installatori/ProInspectP
 phase('9.19', 'Dev3ProcessImageService', 'Dev.3: PROFINET in ProInspectProcessImageSoftFieldbusService',
       'Give the ProInspect process-image service a `Transport=profinet` option, so a PROFINET PLC exchanges the same '
       '112 / 252 bytes as with the Hilscher card, EtherNet/IP or Modbus: library sync, DLL project, service settings, '
-      '`.reg` files, GSDML folder, installer and README. **Status: prepared, not applied** - Dev.3 is busy with other '
-      'work; apply on a new `dev/<story>/<task>` branch when it is free. Paths below are relative to the Dev.3 root.',
+      '`.reg` files, GSDML folder, installer and README. **Status: superseded by '
+      '[Phase 10](../phase-10-dev3-profinet.md)** (both raw-Ethernet backends, 256 / 256-byte modules, a byte order '
+      'for every transport); kept for reference. Paths below are relative to the Dev.3 root.',
       ['[Phase 8 Dev.3 integration](../phase-8-dev3.md)', '[dev3-integration.md](../../dev3-integration.md)',
        '[Test runbook, section 5](../../profinet-test-runbook.md#5-optional-the-process-image-service)'],
       [
@@ -1333,7 +1334,7 @@ def render_index():
     milestone = {'9.01': 'A - L2 access and timing', '9.06': 'B/C - LLDP, RPC, blocks, model',
                  '9.10': 'D - cyclic, alarms, AR, device', '9.14': 'E - test tools',
                  '9.16': 'F - common API and .NET', '9.18': 'G - CODESYS bring-up',
-                 '9.19': 'H - Dev.3 integration (prepared, not applied)',
+                 '9.19': 'H - Dev.3 integration (superseded by Phase 10)',
                  '9.20': 'I - own NDIS driver instead of Npcap'}
     for p in PHASES:
         if p['num'] in milestone:
@@ -1352,7 +1353,8 @@ Results: [phase-9-profinet.md](../phase-9-profinet.md).
 
 The phases follow the include dependencies of the code, so each phase compiles on top of the previous
 ones. The spec planned 24 phases; codecs and their users were merged where a file could not be split
-without duplicating code, giving 18. Phase 9.19 adds PROFINET to the Dev.3 process-image service.
+without duplicating code, giving 18. Phase 9.19 prepared PROFINET for the Dev.3 process-image service; it is
+superseded by [Phase 10](../phase-10-dev3-profinet.md).
 
 Test procedure with CODESYS / a real PLC: [profinet-test-runbook.md](../../profinet-test-runbook.md); test kit:
 `tools/pack_profinet_test.ps1`.

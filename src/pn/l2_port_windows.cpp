@@ -170,6 +170,8 @@ std::unique_ptr<L2Port> openL2Port(const std::string& selector, const L2Options&
     if (list.empty()) {
         if (error && error->empty())
             *error = "no Ethernet adapter found";
+        else if (error && options.backend == L2Backend::Auto && backend == L2Backend::Npcap)
+            *error += " - or install and start the softpn_ndis driver (net start SoftPnNdis)";
         return nullptr;
     }
     const AdapterInfo* found = win::selectAdapter(list, selector);

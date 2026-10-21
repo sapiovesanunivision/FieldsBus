@@ -132,10 +132,14 @@ public:
 
     ~NdisPort() override
     {
+        // copy the events first: /analyze (C6001) cannot follow them through drainReads()
+        HANDLE events[kPendingReads] = {};
+        for (size_t i = 0; i < kPendingReads; ++i)
+            events[i] = slots_[i].ov.hEvent;
         drainReads();
-        for (Slot& s : slots_) {
-            if (s.ov.hEvent)
-                CloseHandle(s.ov.hEvent);
+        for (HANDLE e : events) {
+            if (e)
+                CloseHandle(e);
         }
         CloseHandle(h_);
         if (interruptEvent_)

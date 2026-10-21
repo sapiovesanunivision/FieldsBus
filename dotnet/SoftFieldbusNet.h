@@ -84,6 +84,8 @@ public:
     property int ProfinetMinUpdateTimeMs;
     property bool ProfinetSendVlanTag;
     property bool ProfinetPromiscuous;
+    /// Windows raw-Ethernet backend: "auto" (softpn_ndis driver if running, else Npcap), "ndis" or "npcap".
+    property String^ ProfinetL2Backend;
 };
 
 public ref class FieldbusInputsEventArgs sealed : EventArgs {

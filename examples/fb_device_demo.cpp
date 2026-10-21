@@ -4,7 +4,7 @@
 //
 // Usage: fb_device_demo --transport eip|modbus-tcp|modbus-udp|modbus|profinet
 //                       [--bind IP] [--in-size N] [--out-size N] [--port N] [--unit N]
-//                       [--adapter NIC] [--station NAME]   (PROFINET; sizes 16/32/64/128/256)
+//                       [--adapter NIC] [--station NAME] [--backend auto|ndis|npcap]   (PROFINET; sizes 16/32/64/128/256)
 #include "softfb/fieldbus_device.hpp"
 
 #include <algorithm>
@@ -71,6 +71,8 @@ int main(int argc, char** argv)
             cfg.profinet.adapter = v;
         else if (k == "--station")
             cfg.profinet.stationName = v;
+        else if (k == "--backend")
+            cfg.profinet.l2Backend = v;
         else {
             std::fprintf(stderr, "unknown option %s\n", k.c_str());
             return 2;

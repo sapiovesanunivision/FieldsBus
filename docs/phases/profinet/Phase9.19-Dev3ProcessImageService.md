@@ -3,7 +3,7 @@
 > Part of the softpn PROFINET RT device PoC. Index: [README.md](README.md). Code blocks are the verified files from branch `feature/profinet-poc`.
 
 ## Goal
-Give the ProInspect process-image service a `Transport=profinet` option, so a PROFINET PLC exchanges the same 112 / 252 bytes as with the Hilscher card, EtherNet/IP or Modbus: library sync, DLL project, service settings, `.reg` files, GSDML folder, installer and README. **Status: prepared, not applied** - Dev.3 is busy with other work; apply on a new `dev/<story>/<task>` branch when it is free. Paths below are relative to the Dev.3 root.
+Give the ProInspect process-image service a `Transport=profinet` option, so a PROFINET PLC exchanges the same 112 / 252 bytes as with the Hilscher card, EtherNet/IP or Modbus: library sync, DLL project, service settings, `.reg` files, GSDML folder, installer and README. **Status: superseded by [Phase 10](../phase-10-dev3-profinet.md)** (both raw-Ethernet backends, 256 / 256-byte modules, a byte order for every transport); kept for reference. Paths below are relative to the Dev.3 root.
 
 ## Documentation References
 - [Phase 8 Dev.3 integration](../phase-8-dev3.md)
