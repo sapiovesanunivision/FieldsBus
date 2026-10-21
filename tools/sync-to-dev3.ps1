@@ -17,9 +17,10 @@
       drivers\softpn_ndis\inc\*.h -> <Dev3Root>\Dev\Sdk\UvX\sources\SoftFieldbus\drivers\softpn_ndis\inc\*.h
                                                                                (softpn_ndis driver interface)
 
-    The Dev.3 vcxproj must compile src\pn\l2_port_windows.cpp and l2_port_ndis.cpp (always) and
-    l2_port_npcap.cpp with SOFTPN_HAS_NPCAP=1 (only with the Npcap SDK), and add
-    drivers\softpn_ndis\inc to the include path (see Phase 9.19 / 9.20).
+    The Dev.3 vcxproj compiles src\pn\l2_port_windows.cpp, l2_port_ndis.cpp and l2_port_npcap.cpp with
+    SOFTPN_HAS_NPCAP=1 (the Npcap SDK is required there, see Phase 10e), and adds drivers\softpn_ndis\inc and
+    $(NPCAP_SDK)\Include to the include path. Only the driver's interface header goes to Dev.3: the driver
+    itself is developed and packaged in FieldsBus only.
 
     - Copies the committed HEAD content (git archive), not the working tree.
     - Writes only files whose content changed; removes mirror files that no longer exist upstream
@@ -83,9 +84,11 @@ function Get-TextHash([string]$Text) {
 function Read-Text([string]$Path) { return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8) }
 
 # ---- FieldsBus state --------------------------------------------------------
-$dirty = Invoke-Git @('status', '--porcelain', '--', 'include', 'src')
+# Every Src folder of $mappings: the uncommitted-changes check and the export below use this list.
+$exportPaths = @('include', 'src', 'drivers/softpn_ndis/inc')
+$dirty = Invoke-Git (@('status', '--porcelain', '--') + $exportPaths)
 if ($dirty -and -not $AllowDirty) {
-    throw "FieldsBus include/ or src/ has uncommitted changes (the sync copies HEAD). Commit them, or pass -AllowDirty.`n$($dirty -join "`n")"
+    throw "FieldsBus $($exportPaths -join ', ') has uncommitted changes (the sync copies HEAD). Commit them, or pass -AllowDirty.`n$($dirty -join "`n")"
 }
 $commit = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
 $describe = (Invoke-Git @('describe', '--always', '--tags')).Trim()
@@ -102,7 +105,7 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("fieldsbus-sync-" + [guid]::
 New-Item -ItemType Directory -Path $tmp -WhatIf:$false | Out-Null # scratch export, also under -WhatIf
 try {
     $zip = Join-Path $tmp 'head.zip'
-    Invoke-Git @('archive', '--format=zip', "--output=$zip", 'HEAD', 'include', 'src') | Out-Null
+    Invoke-Git (@('archive', '--format=zip', "--output=$zip", 'HEAD') + $exportPaths) | Out-Null
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -WhatIf:$false
 
     # Desired mirror: Dev3-relative path -> text

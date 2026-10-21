@@ -46,6 +46,10 @@ Also update the help text above `param()` (lines 20-22). The Dev.3 project now c
     $(NPCAP_SDK)\Include to the include path.
 ```
 
+**Done 2026-10-21:** implemented with one list, `$exportPaths`, used by both the check and the export.
+`-WhatIf` against Dev.3 with PowerShell 7 and 5.1 at `366adbf`: added 32, changed 5, removed 0, unchanged 14, and
+nothing written to Dev.3.
+
 ### Key Concepts
 1. **Why it was not seen before**: the mapping was added in Phase 9.20, but the script has not been run against Dev.3
    since then (the last sync is `b547c2b`).
