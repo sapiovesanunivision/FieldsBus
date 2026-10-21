@@ -128,7 +128,7 @@ data-hold watchdog (default factor 3 = 24 ms at 8 ms).
 | D2 | Driver changes: EtherType list + VLAN, packet filter per open, no loopback, overlapped reads, cancel, enumeration, link state, SDDL | **send side + API done 2026-10-16** (selftest 18/18 in the VM); receive test and Driver Verifier open, see "D2 result" |
 | D3 | `src/pn/l2_port_ndis.cpp` backend + build switch + fallback to Npcap; `pn_probe --list/--identify/--jitter` on it | **done 2026-10-17**, see "D3 result" |
 | D4 | Real test: CODESYS on 10.0.0.128 (procedure: [HANDOFF-profinet-codesys.md](HANDOFF-profinet-codesys.md)), then Siemens; compare timing with Npcap (`pn_probe --jitter`, demo statistics) | **CODESYS passed 2026-10-19** (see "D4 result so far"); Siemens with the driver not yet tried |
-| D5 | Signing, INF/installer, docs (phase doc like `docs/phases/profinet/`), README | signed driver installs on a clean Windows 11 PC |
+| D5 | Signing, INF/installer, coexistence with Npcap, docs (phase doc like `docs/phases/profinet/`), README | signed driver installs on a clean Windows 11 PC; start point [HANDOFF-softpn-ndis-d5.md](HANDOFF-softpn-ndis-d5.md) |
 
 ### D1 result (2026-10-16)
 
