@@ -18,13 +18,18 @@ foreach ($f in $files) {
 
 New-Item -ItemType Directory -Force $Dest | Out-Null
 Copy-Item $files $Dest -Force
+# Symbols for WinDbg on the debugger host (Driver Verifier runs): sym\softpn_ndis.pdb matches this .sys.
+New-Item -ItemType Directory -Force (Join-Path $Dest 'sym') | Out-Null
+Copy-Item "$sys\softpn_ndis.pdb" (Join-Path $Dest 'sym') -Force
 
 # The scripts are ASCII and use CRLF so cmd.exe reads them correctly.
 $install = @'
 @echo off
 rem Installs softpn_ndis (test-signed). Run as administrator in the test VM only.
 cd /d "%~dp0"
-bcdedit /enum {current} | find /i "testsigning" | find /i "Yes" >nul || (echo Test signing is off: bcdedit /set testsigning on, reboot & exit /b 1)
+rem bcdedit localizes Yes/No (Si/Ja, No/Nein): require the entry and reject the "No" values.
+bcdedit /enum {current} | find /i "testsigning" >nul || (echo Test signing is off: bcdedit /set testsigning on, reboot & exit /b 1)
+bcdedit /enum {current} | find /i "testsigning" | findstr /i /r /c:" No *$" /c:" Nein *$" /c:" Non *$" >nul && (echo Test signing is off: bcdedit /set testsigning on, reboot & exit /b 1)
 certutil -f -addstore Root softpn_ndis.cer >nul || exit /b 1
 certutil -f -addstore TrustedPublisher softpn_ndis.cer >nul || exit /b 1
 netcfg -v -l softpn_ndis.inf -c p -i UV_SoftPnNdis || exit /b 1

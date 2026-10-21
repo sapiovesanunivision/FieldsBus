@@ -70,9 +70,54 @@ bool ioctl(HANDLE h, DWORD code, const void* in, DWORD inLen, void* out, DWORD o
     return ok != FALSE;
 }
 
+// Opens the adapter on a new handle and sets the receive filter. INVALID_HANDLE_VALUE on failure.
+HANDLE openAdapter(const AdapterInfo& adapter, uint16_t extraEtherType, std::string* error)
+{
+    auto fail = [&](const std::string& m) {
+        if (error)
+            *error = m;
+        return INVALID_HANDLE_VALUE;
+    };
+    HANDLE h = openControl(true);
+    if (h == INVALID_HANDLE_VALUE)
+        return fail(controlError(GetLastError()));
+
+    ULONG version = 0;
+    if (!ioctl(h, IOCTL_SOFTPN_GET_VERSION, nullptr, 0, &version, sizeof version) || version != SOFTPN_NDIS_API_VERSION) {
+        CloseHandle(h);
+        return fail("softpn_ndis: driver API version " + std::to_string(version) + ", expected " +
+                    std::to_string(SOFTPN_NDIS_API_VERSION) + " (driver and program do not match)");
+    }
+
+    const std::wstring name = widen(adapter.name);
+    if (!ioctl(h, IOCTL_NDISPROT_OPEN_DEVICE, name.data(), DWORD(name.size() * sizeof(wchar_t)), nullptr, 0)) {
+        const DWORD err = GetLastError();
+        CloseHandle(h);
+        if (err == ERROR_BUSY)
+            return fail("softpn_ndis: " + adapter.friendlyName + " is already opened by another program "
+                        "(one program per adapter)");
+        return fail("softpn_ndis: cannot open " + adapter.friendlyName + ", error " + std::to_string(err));
+    }
+
+    SOFTPN_FILTER f{};
+    f.Version = SOFTPN_NDIS_API_VERSION;
+    f.Flags = SOFTPN_FILTER_VLAN | SOFTPN_FILTER_DROP_OWN;
+    f.EtherTypes[f.EtherTypeCount++] = kEtherTypeProfinet;
+    f.EtherTypes[f.EtherTypeCount++] = kEtherTypeLldp;
+    if (extraEtherType != 0)
+        f.EtherTypes[f.EtherTypeCount++] = extraEtherType;
+    if (!ioctl(h, IOCTL_SOFTPN_SET_FILTER, &f, sizeof f, nullptr, 0)) {
+        const DWORD err = GetLastError();
+        CloseHandle(h);
+        return fail("softpn_ndis: set filter failed, error " + std::to_string(err));
+    }
+    return h;
+}
+
 class NdisPort : public L2Port {
 public:
-    NdisPort(AdapterInfo info, HANDLE h) : info_(std::move(info)), h_(h)
+    NdisPort(AdapterInfo info, HANDLE h, uint16_t extraEtherType)
+        : info_(std::move(info)), h_(h), extraEtherType_(extraEtherType)
     {
         interruptEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         txEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -87,11 +132,8 @@ public:
 
     ~NdisPort() override
     {
-        CancelIoEx(h_, nullptr);
+        drainReads();
         for (Slot& s : slots_) {
-            DWORD n = 0;
-            if (s.pending)
-                GetOverlappedResult(h_, &s.ov, &n, TRUE);
             if (s.ov.hEvent)
                 CloseHandle(s.ov.hEvent);
         }
@@ -128,7 +170,10 @@ public:
     {
         Slot& s = slots_[next_];
         if (!s.pending && !post(s)) {
-            Sleep(100); // adapter gone (unbind, driver stopped): don't spin, the caller retries
+            // Adapter gone (unbind, adapter disabled, driver restarted): the handle is dead for good.
+            // Reopen the adapter once it is bound again; don't spin, the caller retries.
+            Sleep(100);
+            reopen();
             return false;
         }
         HANDLE events[2] = {s.ov.hEvent, interruptEvent_};
@@ -160,6 +205,40 @@ private:
         bool pending = false;
     };
 
+    // Cancels the posted reads and waits until each has completed.
+    void drainReads()
+    {
+        CancelIoEx(h_, nullptr);
+        for (Slot& s : slots_) {
+            DWORD n = 0;
+            if (s.pending)
+                GetOverlappedResult(h_, &s.ov, &n, TRUE);
+            s.pending = false;
+        }
+    }
+
+    // Called from receive() only. At most once per second: open the adapter on a new handle and,
+    // if that works, replace the dead one (send() holds txMutex_ while it uses h_).
+    void reopen()
+    {
+        const ULONGLONG now = GetTickCount64();
+        if (now - lastReopen_ < 1000)
+            return;
+        lastReopen_ = now;
+        HANDLE h = openAdapter(info_, extraEtherType_, nullptr);
+        if (h == INVALID_HANDLE_VALUE)
+            return; // not bound yet
+        drainReads();
+        {
+            std::lock_guard<std::mutex> lock(txMutex_);
+            CloseHandle(h_);
+            h_ = h;
+        }
+        next_ = 0;
+        for (Slot& s : slots_)
+            post(s);
+    }
+
     // Posts one read. A read that completes at once still signals its event, so receive() treats
     // both cases alike.
     bool post(Slot& s)
@@ -176,6 +255,8 @@ private:
 
     AdapterInfo info_;
     HANDLE h_;
+    uint16_t extraEtherType_ = 0;
+    ULONGLONG lastReopen_ = 0;
     NET_LUID luid_{};
     bool haveLuid_ = false;
     Slot slots_[kPendingReads];
@@ -237,46 +318,11 @@ std::vector<AdapterInfo> ndisListAdapters(std::string* error)
 
 std::unique_ptr<L2Port> ndisOpen(const AdapterInfo& adapter, const L2Options& options, std::string* error)
 {
-    auto fail = [&](const std::string& m) -> std::unique_ptr<L2Port> {
-        if (error)
-            *error = m;
-        return nullptr;
-    };
-    HANDLE h = openControl(true);
+    HANDLE h = openAdapter(adapter, options.extraEtherType, error);
     if (h == INVALID_HANDLE_VALUE)
-        return fail(controlError(GetLastError()));
-
-    ULONG version = 0;
-    if (!ioctl(h, IOCTL_SOFTPN_GET_VERSION, nullptr, 0, &version, sizeof version) || version != SOFTPN_NDIS_API_VERSION) {
-        CloseHandle(h);
-        return fail("softpn_ndis: driver API version " + std::to_string(version) + ", expected " +
-                    std::to_string(SOFTPN_NDIS_API_VERSION) + " (driver and program do not match)");
-    }
-
-    const std::wstring name = widen(adapter.name);
-    if (!ioctl(h, IOCTL_NDISPROT_OPEN_DEVICE, name.data(), DWORD(name.size() * sizeof(wchar_t)), nullptr, 0)) {
-        const DWORD err = GetLastError();
-        CloseHandle(h);
-        if (err == ERROR_BUSY)
-            return fail("softpn_ndis: " + adapter.friendlyName + " is already opened by another program "
-                        "(one program per adapter)");
-        return fail("softpn_ndis: cannot open " + adapter.friendlyName + ", error " + std::to_string(err));
-    }
-
-    SOFTPN_FILTER f{};
-    f.Version = SOFTPN_NDIS_API_VERSION;
-    f.Flags = SOFTPN_FILTER_VLAN | SOFTPN_FILTER_DROP_OWN;
-    f.EtherTypes[f.EtherTypeCount++] = kEtherTypeProfinet;
-    f.EtherTypes[f.EtherTypeCount++] = kEtherTypeLldp;
-    if (options.extraEtherType != 0)
-        f.EtherTypes[f.EtherTypeCount++] = options.extraEtherType;
-    if (!ioctl(h, IOCTL_SOFTPN_SET_FILTER, &f, sizeof f, nullptr, 0)) {
-        const DWORD err = GetLastError();
-        CloseHandle(h);
-        return fail("softpn_ndis: set filter failed, error " + std::to_string(err));
-    }
+        return nullptr;
     // options.promiscuous is not needed: the driver requests "all multicast" for every open.
-    return std::make_unique<NdisPort>(adapter, h);
+    return std::make_unique<NdisPort>(adapter, h, options.extraEtherType);
 }
 
 } // namespace softpn

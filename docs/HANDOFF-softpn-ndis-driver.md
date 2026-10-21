@@ -261,6 +261,18 @@ Remaining for a product: D5 (signing route, installer, coexistence with Npcap), 
   - phase doc `Phase9.20-NdisBackend.md` + `gen_profinet_docs.py` entry;
   - D4 with CODESYS on a physical PC.
 
+### Driver Verifier result so far (2026-10-20)
+
+Standard Verifier pass in VM pndevA (2026-10-21): selftest, 30 + 45 min full stack at 8 ms, hard exits, stop/start,
+stop with an open handle, and unbind with and without traffic all pass, with no bugcheck and no pool leak. Fixed on
+the way:
+- **Driver:** the sample's `FrameTypeArray` {802.1X, 802.1Q} let NDIS drop unicast 0x8892 frames ("Unsupported
+  EtherType"). It now lists 0x8892, 0x88CC, 0x88B5 and 802.1Q.
+- **Backend:** `l2_port_ndis.cpp` now reopens the adapter after an unbind.
+
+**D4 should be repeated with the fixed build.** Details:
+[softpn-driver-verifier-report.md](softpn-driver-verifier-report.md).
+
 Optional later: cyclic transmit scheduled in the driver (kernel timer) if user-mode jitter limits the 8 ms /
 watchdog-3 target (Gate D).
 

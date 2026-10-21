@@ -497,7 +497,15 @@ Return Value:
     UINT                     SelectedMediumIndex;
     BOOLEAN                  fOpenComplete = FALSE;
     ULONG                    GenericUlong = 0;
-    NET_FRAME_TYPE           FrameTypeArray[2] = {NDIS_ETH_TYPE_802_1X, NDIS_ETH_TYPE_802_1Q};
+    //
+    //  softpn: NDIS demultiplexes receives by these EtherTypes. The sample's {802.1X, 802.1Q}
+    //  let NDIS drop unicast PROFINET RT frames ("Unsupported EtherType" in pktmon) while
+    //  broadcasts still arrived. 0x88B5 is the local experimental type softpn_ndis_test uses.
+    //
+    NET_FRAME_TYPE           FrameTypeArray[4] = {0x8892,                  // PROFINET
+                                                  0x88CC,                  // LLDP
+                                                  0x88B5,                  // softpn_ndis_test
+                                                  NDIS_ETH_TYPE_802_1Q};
 #if DBG
     PNDISPROT_OPEN_CONTEXT   pTmpOpenContext;
 #endif
