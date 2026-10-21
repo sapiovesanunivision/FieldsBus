@@ -1,8 +1,8 @@
 # Phase 10e: Sync and DLL project with both raw-Ethernet backends
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repositories: **FieldsBus**
-> (step 10e.1) and **Dev.3** `dev/4516/4526-ProcessImage`. Status: planned. The sync counts below come from a
-> `-WhatIf` run of the fixed script on 2026-10-21; nothing was written to Dev.3.
+> (step 10e.1) and **Dev.3** `dev/4516/4526-ProcessImage`. **Status: done 2026-10-21**: FieldsBus `baaead4`
+> (pushed), Dev.3 `b2d5f687c6` "Sync FieldsBus baaead4" (local, not pushed). The blocks below are the files.
 
 ## Goal
 Bring softpn into Dev.3's `SoftFieldbus145_x64(d).dll`, with **both** raw-Ethernet backends compiled in: the
@@ -311,12 +311,18 @@ Groups the softpn files under a "pn" folder in Solution Explorer. Append the blo
 
 ## Verification Checklist
 
-- [ ] FieldsBus: sync-script fix committed and pushed with 10a-10d
-- [ ] Sync: 32 added / 5 changed (or the counts of the new FieldsBus commit), stamp updated
-- [ ] All four configurations build; Debug code analysis has no new warnings
-- [ ] `wpcap.dll` delay-loaded, `IPHLPAPI.DLL` linked
-- [ ] Without `NPCAP_SDK`: clear build error
-- [ ] Existing users of the DLL still build: `UvcIOSoftModBus`, `UnitTestUvcIOSoftModBus` (11/11), the service, the PLC simulator
+Results 2026-10-21 (dev PC, VS 2026 MSBuild, `NPCAP_SDK` = Npcap SDK 1.16):
+
+- [x] FieldsBus: sync-script fix committed with 10a-10d and pushed (`baaead4`)
+- [x] Sync: added 32, changed 5, removed 0, unchanged 14; stamp `baaead4`
+- [x] SoftFieldbus Debug_2026, Release_2026, Debug_2022, Release_2022 (Rebuild): 0 warnings, 0 errors;
+      `RunCodeAnalysis` on in Debug
+- [x] `dumpbin /dependents` (Release_2026): `IPHLPAPI.DLL` imported, `wpcap.dll` under delay load
+- [x] `NPCAP_SDK` empty: "error : SoftFieldbus PROFINET: set the environment variable NPCAP_SDK ..." (vcxproj line 193)
+- [x] `UvcIOSoftModBus`, `UnitTestUvcIOSoftModBus`, the service and the PLC simulator, Debug_2026 / Release_2026: 0 warnings
+- [x] `UnitTestUvcIOSoftModBus` 11/11 in Release_2026 and Debug_2026 (vstest with `bin` on PATH: the test DLL is in
+      `bin.test`, its dependencies in `bin`)
+- [x] Dev.3 commit `b2d5f687c6` (40 files under `Dev\Sdk\UvX` only)
 
 ---
 

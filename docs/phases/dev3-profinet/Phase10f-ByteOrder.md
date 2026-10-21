@@ -1,7 +1,7 @@
 # Phase 10f: Byte order for all transports
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **Dev.3**
-> `dev/4516/4526-ProcessImage`. Status: planned, not built. `D3` =
+> `dev/4516/4526-ProcessImage`. **Status: implemented 2026-10-21** (Dev.3, uncommitted); code as below. `D3` =
 > `Dev/Applicazioni/ProInspect/ProVision/Sources/UvpProcessImage/ProInspectProcessImageSoftFieldbusService`.
 
 ## Goal
@@ -392,13 +392,25 @@ The new names in the help and the error text. The parsing itself is unchanged, b
 
 ## Verification Checklist
 
-- [ ] The service builds in the four configurations; Debug code analysis has no new warnings
-- [ ] `swapForModbus` no longer appears in the service (`git grep swapForModbus D3`)
-- [ ] `-process eip`: "byte order little" in the started line and in key `t`
-- [ ] `-process modbus-tcp 502 swap` -> big; `... none` -> little; `... big-wordswap`; `... wrong` -> error text
-- [ ] Registry `modbus\ByteOrder = "xyz"`: event-log warning, service runs with big
-- [ ] Regression with the **old** PLC simulator (not yet changed): eip and modbus-tcp (`big` = old `swap`) still
-      exchange correct data (machine mode, view results)
+Results 2026-10-21, dev PC, Release_2026, loopback (`ProInspectProcessImageService -process` + service + the
+**old** PLC simulator; keys typed into the hidden consoles with `WriteConsoleInput`). Data check: simulator `d 1234`
+and `n` x3 -> service key `o`; service packetId -> simulator `p` twice, 1 s apart.
+
+- [x] The service builds in Debug/Release 2026 and 2022: 0 warnings (code analysis in Debug)
+- [x] No `swapForModbus` / `modbusByteSwap` left in the service folder
+
+| Service | Simulator | Started line / key `t` | Service sees (recipeId, inputs) | Simulator sees (packetId) |
+|---|---|---|---|---|
+| `eip` | `eip` | byte order little | 1234, 3 | 799 -> 986 |
+| `modbus-tcp 1502 big` | `--byte-order swap` | big | 1234, 3 | 818 -> 1004 |
+| `modbus-tcp 1502 little` | `--byte-order none` | little | 1234, 3 | 801 -> 988 |
+| `modbus-udp 1502 swap` (old name) | `--byte-order swap` | big | 1234, 3 | 798 -> 988 |
+| `modbus-tcp 1502 big` | `--byte-order none` (**mismatch**) | big | **0xD2040000, 0x03000000** | **7939 -> -9981** |
+| `modbus-tcp 1502 big-wordswap` | - | big-wordswap | - | - |
+| `modbus-tcp 1502 wrong` | - | "unknown transport ... or byte order (little, big, big-wordswap)", exit 1 | | |
+
+- [ ] `big-wordswap` data test: needs the new PLC simulator (10i)
+- [ ] Registry `modbus\ByteOrder = "xyz"`: event-log warning (needs admin rights to write HKLM: test VM / installer test)
 
 ---
 
