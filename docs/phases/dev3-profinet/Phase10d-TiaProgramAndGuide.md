@@ -1,7 +1,8 @@
 # Phase 10d: TIA PLC program and the PLC setup guide
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **FieldsBus**,
-> branch `feature/profinet-poc`. Status: planned, not tested on a PLC.
+> branch `feature/profinet-poc`. **Status: files written 2026-10-21** (uncommitted) from the blocks below; the
+> guide got a first results row (CODESYS connection test). `ProInspectPn.scl` not yet compiled in TIA.
 
 ## Goal
 The Siemens S7-1200 / S7-1500 version of the test program (`ProInspectPn.scl`), plus one setup guide for CODESYS and
@@ -336,9 +337,13 @@ with the Hilscher card or EtherNet/IP, at the start of two 256-byte modules.
 
 ## Verification Checklist
 
+Static checks 2026-10-21 (no TIA on the dev PC):
+
+- [x] `ProInspectPn.scl`: 7 TYPE / END_TYPE, IF / FOR blocks balanced; UTF-8 without BOM, LF (as `SoftPN_Echo.scl`)
+- [x] Struct sizes from the member lists: PI_ToPc 112 + 144 pad = 256, PI_FromPc 252 + 4 pad = 256
+- [x] `SoftFieldbusPnPLCSetup.md` links resolve
 - [ ] TIA: "Generate blocks from source" creates 7 PLC data types and FB `ProInspectPn` without errors
 - [ ] TIA: compile with 0 errors on an S7-1500 (and an S7-1200 if available)
-- [ ] `SoftFieldbusPnPLCSetup.md` links resolve
 - [ ] 10j: S7 with `ByteOrder=big`: `bLayoutOk`, `bPcAlive`, `bByteOrderOk` TRUE; console recipeId 1234
 
 ---

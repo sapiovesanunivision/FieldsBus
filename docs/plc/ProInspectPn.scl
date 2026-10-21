@@ -1,0 +1,163 @@
+// ProInspect process image over PROFINET - test program for S7-1200 / S7-1500 (TIA Portal).
+// Device: "ProInspect SoftFieldbus" from GSDML-V2.43-Univision-ProInspect-*.xml.
+//   slot 1 "Input 256 bytes (PC to PLC)"  = PI_FromPc (252 bytes) + 4 bytes 0
+//   slot 2 "Output 256 bytes (PLC to PC)" = PI_ToPc (112 bytes) + 144 bytes unused
+// PC side: ProInspectProcessImageSoftFieldbusService, Transport = profinet, profinet\ByteOrder = big (the default):
+// WORD / INT / DWORD / REAL arrive in S7 byte order, no SWAP needed. bByteOrderOk shows it.
+//
+// Import: PLC_1 -> External source files -> Add new external file -> this file,
+//         right-click it -> Generate blocks from source. Creates the PLC data types PI_* and FB "ProInspectPn".
+// Call it in OB1 with an instance DB and the hardware identifiers of the two modules
+// (PLC tags -> Show all tags -> System constants, data type Hw_SubModule), for example:
+//
+//     "ProInspectPn_DB"(hwIn  := "ProInspect_SoftFieldbus~Input_256_bytes_(PC_to_PLC)_1",
+//                       hwOut := "ProInspect_SoftFieldbus~Output_256_bytes_(PLC_to_PC)_1");
+//
+// Layout = ProInspectProcessImageHilscherData.h. The FB uses standard (not optimized) access, so the structs have
+// the same offsets as on the PC (every member is naturally aligned). Procedure: SoftFieldbusPnPLCSetup.md.
+
+TYPE "PI_ViewControl"
+VERSION : 0.1
+   STRUCT
+      appTag : Word;               // partId (bits 0..11) + process (bits 12..15) if CompleteAppTag = 1
+      acquisitionControl : Byte;   // a change to a non-zero value triggers an acquisition
+      inspectionControl : Byte;
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_ViewStatus"
+VERSION : 0.1
+   STRUCT
+      appTag : Word;
+      acquisition : Byte;
+      inspection : Byte;
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_ViewResult"
+VERSION : 0.1
+   STRUCT
+      appTag : Word;
+      result : Byte;
+      acquisition : Byte;
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_ToPc"   // PLC -> PC, 112 bytes
+VERSION : 0.1
+   STRUCT
+      viewControl : Array[0..7] of "PI_ViewControl";   // offset 0
+      recipe : Array[0..31] of Byte;                   // offset 32, recipe name, zero terminated
+      recipeId : DWord;                                // offset 64
+      inputs : DWord;                                  // offset 68, I/O lines of UvcIOProcessImage
+      handled : Array[0..15] of Word;                  // offset 72, ended part ids
+      externalAppTag : Array[0..3] of Word;            // offset 104
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_FromPc"   // PC -> PLC, 252 bytes
+VERSION : 0.1
+   STRUCT
+      packetId : Int;                                  // offset 0, increases every service cycle: heartbeat
+      systemStatus : Int;                              // offset 2, one bit per view
+      recipe : Array[0..31] of Byte;                   // offset 4, current recipe name
+      viewStatus : Array[0..7] of "PI_ViewStatus";     // offset 36
+      viewResult : Array[0..7] of "PI_ViewResult";     // offset 68
+      rejectCode : Array[0..15] of Byte;               // offset 100, OR of all views
+      measurementsStatus : DWord;                      // offset 116, one bit per measurement
+      measurements : Array[0..31] of Real;             // offset 120
+      outputs : DWord;                                 // offset 248, I/O lines of UvcIOProcessImage
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_FromPc256"   // module "Input 256 bytes (PC to PLC)"
+VERSION : 0.1
+   STRUCT
+      data : "PI_FromPc";
+      pad : Array[0..3] of Byte;
+   END_STRUCT;
+END_TYPE
+
+TYPE "PI_ToPc256"   // module "Output 256 bytes (PLC to PC)"
+VERSION : 0.1
+   STRUCT
+      data : "PI_ToPc";
+      pad : Array[0..143] of Byte;
+   END_STRUCT;
+END_TYPE
+
+FUNCTION_BLOCK "ProInspectPn"
+{ S7_Optimized_Access := 'FALSE' }
+VERSION : 0.1
+   VAR_INPUT
+      hwIn  : HW_IO;     // hardware identifier of "Input 256 bytes (PC to PLC)", slot 1
+      hwOut : HW_IO;     // hardware identifier of "Output 256 bytes (PLC to PC)", slot 2
+   END_VAR
+
+   VAR
+      stFromPc : "PI_FromPc256";
+      stToPc : "PI_ToPc256";
+      iRetRead : Int;          // 0 = OK; W#16#80B1 = the struct is not 256 bytes
+      iRetWrite : Int;         // 0 = OK
+      bLayoutOk : Bool;        // TRUE = both modules read / written without error
+      iLastPacketId : Int;
+      diStep : DInt;           // packetId change since the last change seen
+      bByteOrderOk : Bool;     // TRUE = packetId grows by 1..255 per change: the service sends big-endian
+      udPacketChanges : UDInt; // counts while the PC is alive
+      bPacketChanged : Bool;
+      tPcSilent : TON_TIME;
+      bPcAlive : Bool;         // packetId changed during the last 500 ms
+      tTrigger : TON_TIME;     // test trigger on view 1 every 2 s
+      bTriggerTick : Bool;     // tTrigger.Q latched: TRUE for one cycle every 2 s
+      uiTrigger : UInt;
+      sRecipe : String[31] := 'SOFTFIELDBUS TEST';
+      uiChars : UInt;
+      i : Int;
+   END_VAR
+
+BEGIN
+    // 1. consistent read of the whole input module (PC -> PLC)
+    #iRetRead := DPRD_DAT(LADDR := #hwIn, RECORD => #stFromPc);
+
+    // 2. heartbeat: packetId changes every service cycle (Msec, default 10 ms)
+    #bPacketChanged := #stFromPc.data.packetId <> #iLastPacketId;
+    IF #bPacketChanged THEN
+        // big-endian (right): +1..+255 per change; little-endian (wrong): +256 or more
+        #diStep := INT_TO_DINT(#stFromPc.data.packetId) - INT_TO_DINT(#iLastPacketId);
+        IF #diStep < 0 THEN
+            #diStep := #diStep + 65536;
+        END_IF;
+        #bByteOrderOk := #diStep < 256;
+        #iLastPacketId := #stFromPc.data.packetId;
+        #udPacketChanges := #udPacketChanges + 1;
+    END_IF;
+    #tPcSilent(IN := NOT #bPacketChanged, PT := T#500MS);   // restarts on every change
+    #bPcAlive := NOT #tPcSilent.Q;
+
+    // 3. PLC -> PC: values visible in the service console (key o: recipeId, inputs, outputs)
+    #stToPc.data.inputs := UDINT_TO_DWORD(DWORD_TO_UDINT(#stToPc.data.inputs) + 1);   // changes every PLC cycle
+    #stToPc.data.recipeId := DINT_TO_DWORD(1234);   // the console shows 1234 only if the byte order matches
+    FOR #i := 0 TO 31 DO
+        #stToPc.data.recipe[#i] := 16#00;
+    END_FOR;
+    Strg_TO_Chars(Strg := #sRecipe, pChars := 0, Cnt => #uiChars, Chars := #stToPc.data.recipe);
+
+    // 4. test trigger on view 1: new appTag and acquisitionControl = 1 for the first second of every 2 s.
+    //    Self-resetting timer: latch Q in a Bool (as SoftPN_Echo.scl 0.2; "IN := NOT #t.Q" never fires on S7-1500).
+    #tTrigger(IN := NOT #bTriggerTick, PT := T#2S);
+    #bTriggerTick := #tTrigger.Q;
+    IF #bTriggerTick THEN
+        #uiTrigger := #uiTrigger + 1;
+        #stToPc.data.viewControl[0].appTag := UINT_TO_WORD(#uiTrigger) AND 16#0FFF;
+    END_IF;
+    IF #tTrigger.ET < T#1S THEN
+        #stToPc.data.viewControl[0].acquisitionControl := 16#01;
+    ELSE
+        #stToPc.data.viewControl[0].acquisitionControl := 16#00;
+    END_IF;
+
+    // 5. consistent write of the whole output module (PLC -> PC); pad stays 0
+    #iRetWrite := DPWR_DAT(LADDR := #hwOut, RECORD := #stToPc);
+
+    #bLayoutOk := #iRetRead = 0 AND #iRetWrite = 0;
+END_FUNCTION_BLOCK
