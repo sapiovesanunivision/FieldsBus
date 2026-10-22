@@ -88,6 +88,8 @@ VAR
     bPacketChanged : BOOL;
     tPcSilent      : TON;
     bPcAlive       : BOOL;             // packetId changed during the last 500 ms
+    bPcAliveOld    : BOOL;
+    nPcLost        : UDINT;            // bPcAlive TRUE -> FALSE: the PC stopped for more than 500 ms (soak tests: must stay 0)
 
     tTrigger       : TON;              // test trigger on view 1 every 2 s
     nTrigger       : UINT;
@@ -120,6 +122,10 @@ IF bPacketChanged THEN
 END_IF
 tPcSilent(IN := NOT bPacketChanged, PT := T#500MS);   // restarts on every change
 bPcAlive := NOT tPcSilent.Q;
+IF bPcAliveOld AND NOT bPcAlive THEN
+    nPcLost := nPcLost + 1;            // PC silent: service stopped, connection lost or PLC watchdog
+END_IF
+bPcAliveOld := bPcAlive;
 
 // 3. PLC -> PC: values visible in the service console (key o: recipeId, inputs, outputs)
 stToPc.inputs := stToPc.inputs + 1;    // changes every PLC cycle

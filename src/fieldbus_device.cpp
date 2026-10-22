@@ -61,6 +61,8 @@ struct FieldbusDevice::Impl {
 #endif
     std::atomic<bool> started{false};
     std::atomic<DeviceState> lastState{DeviceState::Stopped};
+    // guards the lifetime of pn for profinetStats(), which other threads may call during stop()
+    mutable std::mutex pnMutex;
 
     // softeip::Adapter only accepts a whole input image, so partial ioWrite()
     // calls go through a shadow copy of the output area.
@@ -136,7 +138,10 @@ bool FieldbusDevice::start(std::string* error)
             d.refreshState();
         };
         p.onStateChanged = [&d](softpn::DeviceState) { d.refreshState(); };
-        d.pn = std::make_unique<softpn::Device>(p);
+        {
+            std::lock_guard<std::mutex> lock(d.pnMutex);
+            d.pn = std::make_unique<softpn::Device>(p);
+        }
         {
             std::lock_guard<std::mutex> lock(d.shadowMutex);
             d.pn->setInputData(d.outputShadow.data(), d.outputShadow.size());
@@ -144,6 +149,7 @@ bool FieldbusDevice::start(std::string* error)
         d.started = true;
         if (!d.pn->start(error)) {
             d.started = false;
+            std::lock_guard<std::mutex> lock(d.pnMutex);
             d.pn.reset();
             return false;
         }
@@ -203,7 +209,30 @@ void FieldbusDevice::stop()
     d.eip.reset();
     d.mb.reset();
 #ifdef SOFTFB_HAS_PROFINET
+    std::lock_guard<std::mutex> lock(d.pnMutex);
     d.pn.reset();
+#endif
+}
+
+bool FieldbusDevice::profinetStats(ProfinetStats& out) const
+{
+#ifdef SOFTFB_HAS_PROFINET
+    const Impl& d = *impl_;
+    std::lock_guard<std::mutex> lock(d.pnMutex);
+    if (!d.pn)
+        return false;
+    const softpn::DeviceStats s = d.pn->stats();
+    out.txFrames = s.txFrames;
+    out.rxFrames = s.rxFrames;
+    out.lateCycles = s.lateCycles;
+    out.maxTxPeriodUs = s.maxTxPeriodUs;
+    out.connects = s.arConnects;
+    out.aborts = s.arAborts;
+    out.lastAbort = s.lastAbort;
+    return true;
+#else
+    (void)out;
+    return false;
 #endif
 }
 

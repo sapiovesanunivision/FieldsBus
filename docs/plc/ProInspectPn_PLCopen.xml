@@ -170,6 +170,11 @@
               <type><BOOL /></type>
               <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">packetId changed during the last 500 ms</xhtml></documentation>
             </variable>
+            <variable name="bPcAliveOld"><type><BOOL /></type></variable>
+            <variable name="nPcLost">
+              <type><UDINT /></type>
+              <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">bPcAlive TRUE -&gt; FALSE: the PC stopped for more than 500 ms (soak tests: must stay 0)</xhtml></documentation>
+            </variable>
             <variable name="tTrigger">
               <type><derived name="TON" /></type>
               <documentation><xhtml xmlns="http://www.w3.org/1999/xhtml">test trigger on view 1 every 2 s</xhtml></documentation>
@@ -208,6 +213,10 @@ IF bPacketChanged THEN
 END_IF
 tPcSilent(IN := NOT bPacketChanged, PT := T#500MS);   // restarts on every change
 bPcAlive := NOT tPcSilent.Q;
+IF bPcAliveOld AND NOT bPcAlive THEN
+    nPcLost := nPcLost + 1;            // PC silent: service stopped, connection lost or PLC watchdog
+END_IF
+bPcAliveOld := bPcAlive;
 
 // 3. PLC -&gt; PC: values visible in the service console (key o: recipeId, inputs, outputs)
 stToPc.inputs := stToPc.inputs + 1;    // changes every PLC cycle

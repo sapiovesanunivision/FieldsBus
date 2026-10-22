@@ -92,6 +92,17 @@ struct DeviceConfig {
     std::function<void(DeviceState)> onStateChanged;
 };
 
+// PROFINET frame statistics since start(), cumulative (from softpn::DeviceStats).
+struct ProfinetStats {
+    uint64_t txFrames = 0;      // cyclic frames sent (PC -> PLC)
+    uint64_t rxFrames = 0;      // cyclic frames received (PLC -> PC)
+    uint64_t lateCycles = 0;    // send periods longer than 1.5 x the update time
+    uint32_t maxTxPeriodUs = 0; // longest send period
+    uint64_t connects = 0;      // connections (ARs) established
+    uint64_t aborts = 0;        // connections ended by an error (controller abort, watchdog, ...)
+    std::string lastAbort;      // reason of the last abort, "" if none
+};
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4251) // pimpl unique_ptr member of an exported class
@@ -115,6 +126,10 @@ public:
     Transport transport() const;
     size_t inputSize() const;
     size_t outputSize() const;
+
+    // PROFINET only: frame statistics since start(). Thread safe, also while stop() runs.
+    // Returns false for the other transports and when the device is not running.
+    bool profinetStats(ProfinetStats& out) const;
 
     static const char* transportName(Transport t);
     static const char* stateName(DeviceState s);

@@ -110,6 +110,7 @@ int main(int argc, char** argv)
     // The application: identical for every transport.
     std::vector<uint8_t> in(cfg.inputSize), out(cfg.outputSize, 0);
     uint32_t heartbeat = 0;
+    auto nextStats = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!g_quit) {
         dev.ioRead(0, in.data(), in.size());
         std::copy_n(in.begin(), std::min(in.size(), out.size()), out.begin());
@@ -117,6 +118,15 @@ int main(int argc, char** argv)
         for (size_t i = 0; i < 4 && i < out.size(); ++i)
             out[i] = uint8_t(heartbeat >> (8 * i));
         dev.ioWrite(0, out.data(), out.size());
+        // PROFINET: frame statistics every 10 s (as pn_device_demo)
+        softfb::ProfinetStats s;
+        if (std::chrono::steady_clock::now() >= nextStats && dev.profinetStats(s)) {
+            nextStats += std::chrono::seconds(10);
+            logLine("stats: tx " + std::to_string(s.txFrames) + " rx " + std::to_string(s.rxFrames) + ", max TX period " +
+                    std::to_string(s.maxTxPeriodUs) + " us, late " + std::to_string(s.lateCycles) + ", ARs " +
+                    std::to_string(s.connects) + ", aborts " + std::to_string(s.aborts) +
+                    (s.lastAbort.empty() ? std::string() : " (last: " + s.lastAbort + ")"));
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
