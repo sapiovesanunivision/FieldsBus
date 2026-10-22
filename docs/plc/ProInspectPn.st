@@ -121,7 +121,7 @@ IF bPacketChanged THEN
     nPacketChanges := nPacketChanges + 1;
 END_IF
 tPcSilent(IN := NOT bPacketChanged, PT := T#500MS);   // restarts on every change
-bPcAlive := NOT tPcSilent.Q;
+bPcAlive := NOT tPcSilent.Q AND nPacketChanges > 0;   // FALSE until the first data from the PC
 IF bPcAliveOld AND NOT bPcAlive THEN
     nPcLost := nPcLost + 1;            // PC silent: service stopped, connection lost or PLC watchdog
 END_IF

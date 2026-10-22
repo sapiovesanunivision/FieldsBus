@@ -47,6 +47,13 @@ export it (`git archive ... include src`), so the first sync with softpn would s
 drivers/softpn_ndis/inc". The fix is step 10e.1. A dry run with the fix at `65cb2a0` gives
 added 32, changed 5, removed 0.
 
+**Added after the first soak (2026-10-22):** the service had no frame statistics, so a dropout shorter than the PLC
+watchdog was invisible. FieldsBus `6358f5b`: `FieldbusDevice::profinetStats()` (softpn tx/rx, late cycles, max TX
+period, connects, aborts, last abort reason; thread safe against `stop()`), `fb_device_demo` prints it. Dev.3 service:
+key `t` shows it, registry `Parameters\LogStats` = minutes between statistics lines in the event log (0 = off; a line
+with a new abort is a warning), plus the copy-cycle timing for every transport. PLC programs: `nPcLost` / `udPcLost`
+counts every `bPcAlive` TRUE -> FALSE.
+
 ## Checklist
 
 - [ ] 10a `l2Backend` in `softfb::DeviceConfig`, .NET, `fb_device_demo`; error text names both backends
@@ -91,7 +98,7 @@ simulator. Details: [10i results](dev3-profinet/Phase10i-ReadmeAndPlcSim.md#veri
 | PLC | Backend | Byte order | ConnectedRun | packetId / `bByteOrderOk` | recipe / recipeId / measurements | STOP/RUN | Soak |
 |---|---|---|---|---|---|---|---|
 | CODESYS Control Win (10.0.0.128), `ProInspectPn_PLCopen.xml` | Npcap (dev PC 10.0.0.168), `-process profinet 0 little Ethernet` | little | ✅ 2026-10-21 | ✅ packetId changes (negative half the time: 16-bit wrap) | ✅ PC sees recipeId 1234, inputs counting, recipe "SOFTFIELDBUS TEST" | | |
-| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193), registry `L2Backend=ndis` | little | ✅ 2026-10-22 | ✅ | ✅ | ✅ | 2 h running (2026-10-22) |
+| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193), registry `L2Backend=ndis` | little | ✅ 2026-10-22 | ✅ | ✅ | ✅ | ✅ 32 ms: 1 h, no error. 8 ms (installed service, `LogStats`=10): after 40 min tx 300 039 / rx 300 024, late 0, connections 1, aborts 0, max TX period 11.7 ms; per 10 min tx +75 024 / rx +75 022; copy cycle mean 10.00 ms, max 14.07 ms |
 | Siemens S7-1500, `ProInspectPn.scl` | softpn_ndis or Npcap | big | | | | | |
 
 Dev.3 commits: (to fill)
