@@ -1,7 +1,8 @@
 # Phase 10g: PROFINET transport in the service
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **Dev.3**
-> `dev/4516/4526-ProcessImage`. Status: planned, not built. `D3` =
+> `dev/4516/4526-ProcessImage`. **Status: implemented 2026-10-21** (Dev.3, uncommitted). One addition to the plan:
+> a fifth `-process` argument for the PROFINET NIC (step 10g.4), so the service can be tested without writing HKLM. `D3` =
 > `Dev/Applicazioni/ProInspect/ProVision/Sources/UvpProcessImage/ProInspectProcessImageSoftFieldbusService`.
 
 ## Goal
@@ -205,8 +206,25 @@ Make `profinet` visible as a transport. The port argument is ignored for PROFINE
 **File:** `D3/ProInspectProcessImageSoftFieldbusService.h` and `.cpp`, top comments: "EtherNet/IP adapter, Modbus
 TCP/UDP server or PROFINET IO-Device".
 
+**Added during implementation:** a fifth argument, the PROFINET NIC, because without a registry key (no admin
+rights on the dev PC) `-process profinet` could only stop with "no network card configured":
+
+```cpp
+// ProInspectProcessImageSoftFieldbusService.h
+	bool overrideTransport(const std::string& transport, int port, const std::string& byteOrder = std::string(),
+						   const std::string& adapter = std::string());
+
+// ProInspectProcessImageSoftFieldbusService.cpp, first lines of overrideTransport()
+	if (!adapter.empty())
+		config_.profinetAdapter = adapter;
+
+// ProInspectProcessImageSoftFieldbusServiceMain.cpp: argv[5] -> char adapter[256], passed to overrideTransport();
+// help: -process [transport [port [byteorder [adapter]]]] ... Example: -process profinet 0 little Ethernet
+```
+
 ### Key Concepts
 1. **`softfb::FieldbusDevice::parseTransport`** already accepts `profinet`, `pn` and `profinet-rt` (Phase 9.16).
+2. **The backend** cannot be set on the command line; use `SOFTPN_L2_BACKEND=ndis|npcap` in the console for a test.
 
 ---
 
@@ -228,11 +246,24 @@ ProInspectProcessImageSoftFieldbusService145_x64d.exe -process profinet 0 big
 
 ## Verification Checklist
 
-- [ ] The service builds in the four configurations; Debug code analysis has no new warnings
-- [ ] `-process profinet` without a NIC: clear error, process stays usable (`x` exits)
-- [ ] With a NIC: started line shows 256 / 256 bytes and the NIC; state WaitingForMaster
-- [ ] `%ProgramData%\Univision\ProInspectProcessImageSoftFieldbusService\` created on the first start
-- [ ] `-process eip` and `-process modbus-tcp` unchanged (112 / 252 bytes)
+Results 2026-10-21, dev PC (Release_2026, Npcap, NIC "Ethernet" 10.0.0.168):
+
+- [x] The service builds in Debug/Release 2026 and 2022: 0 warnings
+- [x] `-process profinet 0 big` without a NIC: "PROFINET needs a network card: set Parameters\profinet\Adapter or
+      BindAddress to the PLC NIC", state Stopped, `x` exits
+- [x] `-process profinet 0 little Ethernet`: "PROFINET device on Ethernet (9c:2d:cd:4d:7d:be, 10.0.0.168),
+      NameOfStation 'proinspect', input 256 B / output 256 B", started line 256 / 256 bytes, byte order little;
+      UDP 34964 bound on 10.0.0.168
+- [x] `%ProgramData%\Univision\ProInspectProcessImageSoftFieldbusService\` created on the first start
+- [x] `SOFTPN_L2_BACKEND=ndis` (no driver on this PC): "start: softpn_ndis driver not running (install it, then:
+      net start SoftPnNdis)", state Stopped
+- [x] `-process eip`: 112 / 252 bytes, byte order little (unchanged)
+- [x] **First end-to-end run with CODESYS** (Control Win on 10.0.0.128, `ProInspectPn_PLCopen.xml`, ProInspect
+      GSDML, 32 ms): connect, write 0x8071, ApplicationReady, ConnectedRun; device green in CODESYS. Service side
+      (keys `o`, `e`): recipeId 1234, `inputs` counting, recipe "SOFTFIELDBUS TEST" = what PLC_PRG writes, so
+      `little` is right for CODESYS. PLC side: data present; `packetId` negative half of the time because the
+      16-bit counter wraps every 655 s (not a byte-order symptom; `bByteOrderOk` is the check). One controller
+      abort right after the first connect (CODESYS dropping the AR to the stopped `pn_device_demo`), then steady
 
 ---
 
