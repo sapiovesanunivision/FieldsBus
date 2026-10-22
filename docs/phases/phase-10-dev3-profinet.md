@@ -74,7 +74,7 @@ counts every `bPcAlive` TRUE -> FALSE.
 |---|---|
 | FieldsBus `vs2026-release`, `vs2026-analyze-debug` | ✅ 0 warnings |
 | FieldsBus `pn_selftest` | ✅ 129/129 Windows and Linux |
-| FieldsBus Linux (WSL Ubuntu 24.04, g++ 13.3, `b5c8e1f`) | ✅ 16 targets, 0 warnings; `--backend` validated and otherwise ignored (AF_PACKET; as root: device up on eth0) |
+| FieldsBus Linux (WSL Ubuntu 24.04, g++ 13.3, `b5c8e1f` and again `72558c8`) | ✅ 16 targets, 0 warnings, `pn_selftest` 129/129; `--backend` validated and otherwise ignored (AF_PACKET; as root: device up on eth0); `fb_device_demo` stats line (`profinetStats()`) and clean stop |
 | Dev.3 SoftFieldbus DLL, Debug / Release 2026 (also builds in 2022) | ✅ 0 warnings |
 | Dev.3 service, PLC simulator, `UvcIOSoftModBus`, Debug / Release 2026 | ✅ 0 warnings (2022 configurations no longer supported for these, 2026-10-22) |
 | `UnitTestUvcIOSoftModBus` | ✅ 11/11 Debug and Release 2026 |
