@@ -85,8 +85,8 @@ added 32, changed 5, removed 0.
 
 | PLC | Backend | Byte order | ConnectedRun | packetId / `bByteOrderOk` | recipe / recipeId / measurements | STOP/RUN | Soak |
 |---|---|---|---|---|---|---|---|
-| CODESYS Control Win (10.0.0.128), `ProInspectPn_PLCopen.xml` | Npcap (dev PC) | little | | | | | |
-| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193) | little | | | | | |
+| CODESYS Control Win (10.0.0.128), `ProInspectPn_PLCopen.xml` | Npcap (dev PC 10.0.0.168), `-process profinet 0 little Ethernet` | little | ✅ 2026-10-21 | ✅ packetId changes (negative half the time: 16-bit wrap) | ✅ PC sees recipeId 1234, inputs counting, recipe "SOFTFIELDBUS TEST" | | |
+| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193), registry `L2Backend=ndis` | little | ✅ 2026-10-22 | ✅ | ✅ | | |
 | Siemens S7-1500, `ProInspectPn.scl` | softpn_ndis or Npcap | big | | | | | |
 
 Dev.3 commits: (to fill)

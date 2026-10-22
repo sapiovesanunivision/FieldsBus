@@ -1,7 +1,8 @@
 # Phase 10h: Registry files, GSDML folder, installer
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **Dev.3**
-> `dev/4516/4526-ProcessImage`. Status: planned, not built. `D3` =
+> `dev/4516/4526-ProcessImage`. **Status: implemented 2026-10-22** (Dev.3, uncommitted): files written from the
+> blocks below; installer compiles; not installed yet (test VM). `D3` =
 > `Dev/Applicazioni/ProInspect/ProVision/Sources/UvpProcessImage/ProInspectProcessImageSoftFieldbusService`.
 
 ## Goal
@@ -277,10 +278,15 @@ end;
 
 ## Verification Checklist
 
-- [ ] Four `.reg` files, UTF-16 LE BOM (`Format-Hex -Count 2` shows `FF FE`), differing only in `Transport` and line 3
-- [ ] Importing `_profinet.reg` then `_eip.reg` switches back cleanly (eip run unchanged)
-- [ ] `GSDML\` contains the XML and README
-- [ ] Installer compiles with Inno Setup 6 (`ISCC ...145_x64.iss`)
+Results 2026-10-22, dev PC:
+
+- [x] Four `.reg` files, UTF-16 LE BOM (`FF FE`), CRLF, generated from one template: they differ only in
+      `Transport` and line 3 (checked eip vs profinet: 2 lines)
+- [ ] Importing `_profinet.reg` then `_eip.reg` switches back cleanly (needs admin rights: test VM)
+- [x] `GSDML\` contains `GSDML-V2.43-Univision-ProInspect-20261021.xml` (copy of FieldsBus `gsdml/`) and `README.md`
+      (UTF-8, CRLF as `EDS\README.md`)
+- [x] Installer compiles with Inno Setup 6: `ISCC /Q ...145_x64.iss` exit 0 ->
+      `ProInspectProcessImageSoftFieldbusService-3.6.36.0100-Installer145_x64.exe` (9.6 MB)
 - [ ] On a test VM (admin rights, not the dev PC): PROFINET task without Npcap shows the message; registry has
       `Parameters\profinet`; `C:\ProgramData\Univision\ProInspectProcessImageSoftFieldbusService` exists and
       `Users` can modify it; `System145_x64\GSDML` present

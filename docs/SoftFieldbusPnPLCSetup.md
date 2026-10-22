@@ -102,6 +102,6 @@ with the Hilscher card or EtherNet/IP, at the start of two 256-byte modules.
 | Date | PLC | Backend | Update time | Byte order | Result |
 |---|---|---|---|---|---|
 | 2026-10-21 | CODESYS Control Win V3 x64 SP22, `ProInspectPn_PLCopen.xml`; PC side `pn_device_demo --device-id 2 --in-size 256 --out-size 256` (not the service) | Npcap | 32 ms | - | GSDML and program import OK, `bLayoutOk` TRUE, DataRun, PLC -> PC bytes as the program writes them; connection test only (the demo echoes) |
-| | CODESYS Control Win V3 x64 SP22 | Npcap | 16 ms | little | |
-| | CODESYS Control Win V3 x64 SP22 | softpn_ndis | 16 ms | little | |
+| 2026-10-21 | CODESYS Control Win V3 x64 SP22, Dev.3 service on the dev PC (10.0.0.168) | Npcap | 32 ms | little | ConnectedRun; data both ways correct |
+| 2026-10-22 | CODESYS Control Win V3 x64 SP22, Dev.3 service on the test PC (10.0.0.193), settings from the registry | softpn_ndis | 32 ms | little | ConnectedRun; data both ways correct |
 | | S7-1500 | | 16 ms | big | |
