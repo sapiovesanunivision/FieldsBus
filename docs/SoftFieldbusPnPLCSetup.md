@@ -23,7 +23,8 @@ with the Hilscher card or EtherNet/IP, at the start of two 256-byte modules.
 ## 2. ProInspect PC
 
 1. **Raw Ethernet**: Npcap (https://npcap.com, default options) **or** the softpn_ndis driver must be installed.
-   `Parameters\profinet\L2Backend` = `auto` uses the driver if it runs, otherwise Npcap.
+   `Parameters\profinet\L2Backend` = `ndis` or `npcap` (or `auto`: the driver if it runs, otherwise Npcap). Which one
+   to use, licences and messages: [softpn-l2-backend.md](softpn-l2-backend.md).
 2. **Network card**: the NIC facing the PLC must have a **static IP** in the PLC's subnet. Set
    `Parameters\profinet\Adapter` to its name ("Ethernet 2"), MAC or IP, or set `BindAddress` to its IP.
 3. **Byte order** `Parameters\profinet\ByteOrder`: **`big` for Siemens** (the default), **`little` for CODESYS**.

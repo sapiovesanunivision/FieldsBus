@@ -22,7 +22,7 @@ This phase replaces [Phase 9.19](profinet/Phase9.19-Dev3ProcessImageService.md),
 | Where | One `ByteOrder` value in each transport subkey: `eip`, `modbus`, `profinet` | Matches the existing registry layout; switching `Transport` keeps the right order for each protocol |
 | Defaults | eip **little**, modbus **big** (as today), profinet **big** | Rockwell / CODESYS EtherNet/IP are little-endian; Modbus registers are big-endian; Siemens is the main PROFINET target |
 | PROFINET modules | **256 bytes in each direction** (existing `IN256` 0x14 / `OUT256` 0x24). The 112 / 252 bytes are at offset 0, the rest is zero | softpn accepts only the GSDML sizes 16..256 (`src/pn/pn_model.cpp`); one size is simple for the PLC engineer; no change to softpn needed |
-| Raw Ethernet | **Npcap and softpn_ndis, both always built**, chosen at run time (`profinet\L2Backend` = auto / ndis / npcap). The Npcap SDK becomes a Dev.3 build prerequisite | The driver is not signed yet (D5), so Npcap stays the way to run on a normal PC. `auto` = the driver if it is installed and running, otherwise Npcap |
+| Raw Ethernet | **Npcap and softpn_ndis, both always built**, chosen at run time (`profinet\L2Backend` = auto / ndis / npcap; guidance: [softpn-l2-backend.md](../softpn-l2-backend.md)). The Npcap SDK becomes a Dev.3 build prerequisite | The driver is not signed yet (D5), so Npcap stays the way to run on a normal PC. `auto` = the driver if it is installed and running, otherwise Npcap |
 | Driver development | **softpn_ndis stays in FieldsBus only** (sources, build, signing, package). Dev.3 gets only the user-mode backend (`src/pn/l2_port_ndis.cpp`) and the interface header `drivers/softpn_ndis/inc/softpn_ndis_ioctl.h` through the sync; the driver is installed by its own package (D5), not by the service setup | One home for the kernel code and its signing; the backend's API version check catches a DLL / driver mismatch |
 | Identity | Own GSDML "ProInspect SoftFieldbus", VendorID 0xFFFF (placeholder), **DeviceID 0x0002**, both modules `FixedInSlots` | The generic SoftPN GSDML (DeviceID 1) offers every size; the service needs exactly one layout |
 | PLC programs | CODESYS: byte copy from module arrays mapped without `AT`; TIA: `DPRD_DAT` / `DPWR_DAT` into standard-access structs. Both check the byte order through the `packetId` step | Same patterns as the verified echo programs; a wrong `ByteOrder` is the most likely commissioning error |
@@ -65,28 +65,33 @@ added 32, changed 5, removed 0.
 
 | Build | Result |
 |---|---|
-| FieldsBus `vs2026-release`, `vs2026-analyze` | |
-| FieldsBus `pn_selftest` | |
-| Dev.3 SoftFieldbus DLL, 4 configurations | |
-| Dev.3 service, PLC simulator, `UvcIOSoftModBus`, 4 configurations | |
-| `UnitTestUvcIOSoftModBus` | |
-| Dev.3 without `NPCAP_SDK` (expected: build error with the Npcap message) | |
-| Installer compiles | |
+| FieldsBus `vs2026-release`, `vs2026-analyze-debug` | ✅ 0 warnings |
+| FieldsBus `pn_selftest` | ✅ 129/129 Windows and Linux |
+| FieldsBus Linux (WSL Ubuntu 24.04, g++ 13.3, `b5c8e1f`) | ✅ 16 targets, 0 warnings; `--backend` validated and otherwise ignored (AF_PACKET; as root: device up on eth0) |
+| Dev.3 SoftFieldbus DLL, Debug / Release 2026 (also builds in 2022) | ✅ 0 warnings |
+| Dev.3 service, PLC simulator, `UvcIOSoftModBus`, Debug / Release 2026 | ✅ 0 warnings (2022 configurations no longer supported for these, 2026-10-22) |
+| `UnitTestUvcIOSoftModBus` | ✅ 11/11 Debug and Release 2026 |
+| Dev.3 without `NPCAP_SDK` (expected: build error with the Npcap message) | ✅ |
+| Installer compiles | ✅ |
+| Installer and `.reg` files on a VM (admin rights): task, registry values, ProgramData folder, Npcap / driver warning, transport switch | ✅ 2026-10-22 (user) |
 
 ### Regression and byte order (10j.2, loopback with the PLC simulator)
 
 | Transport | little | big | big-wordswap | mismatch detected |
 |---|---|---|---|---|
-| EtherNet/IP | | | | |
-| Modbus TCP | | | | |
-| Modbus UDP | | | | |
+| EtherNet/IP | ✅ | ✅ | ✅ | ✅ (vs big: 0xD2040000) |
+| Modbus TCP | ✅ | ✅ | ✅ | ✅ (big vs big-wordswap: 0x04D20000) |
+| Modbus UDP | ✅ | ✅ | ✅ | ✅ (big-wordswap vs little: 0x0000D204) |
+
+2026-10-22, Release_2026, dev PC loopback; ✅ = recipeId 1234 and inputs 3 at the service, packetId rising at the
+simulator. Details: [10i results](dev3-profinet/Phase10i-ReadmeAndPlcSim.md#verification-checklist).
 
 ### PROFINET (10j.3, 10j.4)
 
 | PLC | Backend | Byte order | ConnectedRun | packetId / `bByteOrderOk` | recipe / recipeId / measurements | STOP/RUN | Soak |
 |---|---|---|---|---|---|---|---|
 | CODESYS Control Win (10.0.0.128), `ProInspectPn_PLCopen.xml` | Npcap (dev PC 10.0.0.168), `-process profinet 0 little Ethernet` | little | ✅ 2026-10-21 | ✅ packetId changes (negative half the time: 16-bit wrap) | ✅ PC sees recipeId 1234, inputs counting, recipe "SOFTFIELDBUS TEST" | | |
-| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193), registry `L2Backend=ndis` | little | ✅ 2026-10-22 | ✅ | ✅ | | |
+| CODESYS Control Win, same | softpn_ndis (test PC 10.0.0.193), registry `L2Backend=ndis` | little | ✅ 2026-10-22 | ✅ | ✅ | ✅ | 2 h running (2026-10-22) |
 | Siemens S7-1500, `ProInspectPn.scl` | softpn_ndis or Npcap | big | | | | | |
 
 Dev.3 commits: (to fill)

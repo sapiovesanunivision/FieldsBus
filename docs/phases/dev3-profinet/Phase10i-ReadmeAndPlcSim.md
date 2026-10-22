@@ -1,7 +1,9 @@
 # Phase 10i: Service README and PLC simulator
 
 > Part of [Phase 10](../phase-10-dev3-profinet.md). Index: [README.md](README.md). Repository: **Dev.3**
-> `dev/4516/4526-ProcessImage`. Status: planned, not built. `D3` =
+> `dev/4516/4526-ProcessImage`. **Status: implemented 2026-10-22.** README committed in Dev.3 `17a9281f4a` (with
+> the PROFINET test findings: fifth `-process` argument, admin console for the driver, 16-bit `packetId` wrap);
+> PLC simulator uncommitted. `D3` =
 > `Dev/Applicazioni/ProInspect/ProVision/Sources/UvpProcessImage/ProInspectProcessImageSoftFieldbusService`.
 
 ## Goal
@@ -272,11 +274,23 @@ private:
 
 ## Verification Checklist
 
-- [ ] The PLC simulator builds in the four configurations; no `swapForModbus` left (`git grep swapForModbus`)
-- [ ] `ProInspectProcessImagePlcSim --help` shows the new byte-order values
-- [ ] `ProInspectProcessImagePlcSim profinet`: the PROFINET message, exit code 1
-- [ ] Start-up line shows the byte order taken from the registry (eip little, modbus big)
-- [ ] README renders in VS Code preview; links and tables fine
+Results 2026-10-22, dev PC, Release_2026:
+
+- [x] The PLC simulator builds in Debug/Release 2026 and 2022: 0 warnings; no `swapForModbus` / `byteSwap` left
+- [x] `--byte-order xyz`: "unknown byte order xyz (little, big, big-wordswap)" + usage with the new values, exit 1
+- [x] `ProInspectProcessImagePlcSim profinet`: "cannot start: PROFINET is not simulated ...", exit 1
+- [x] Matrix service x simulator (simulator `d 1234`, `n` x3 -> service key `o`; service packetId -> simulator `p` x2):
+
+| Transport | Service | Simulator | Service sees recipeId / inputs | Simulator packetId |
+|---|---|---|---|---|
+| eip | little / big / big-wordswap | same | 0x000004D2 / 0x00000003 (all three) | 918 -> 1127, 1044 -> 1274, 943 -> 1149 |
+| modbus-tcp | little / big / big-wordswap | same | 0x000004D2 / 0x00000003 (all three) | 866 -> 1122, 1121 -> 1429, 898 -> 1104 |
+| modbus-udp | little / big / big-wordswap | same | 0x000004D2 / 0x00000003 (all three) | 1140 -> 1354, 941 -> 1188, 942 -> 1172 |
+| eip | little | **big** | 0xD2040000 / 0x03000000 (bytes reversed) | 9476 -> -23547 |
+| modbus-tcp | big | **big-wordswap** | 0x04D20000 / 0x00030000 (words swapped; WORDs agree) | 914 -> 1096 |
+| modbus-udp | big-wordswap | **little** | 0x0000D204 / 0x00000300 (bytes swapped in each word) | 12035 -> -5629 |
+
+- [ ] Start-up line with the byte order taken from the registry (no service registry key on the dev PC: test PC / VM)
 
 ---
 

@@ -409,7 +409,7 @@ and `n` x3 -> service key `o`; service packetId -> simulator `p` twice, 1 s apar
 | `modbus-tcp 1502 big-wordswap` | - | big-wordswap | - | - |
 | `modbus-tcp 1502 wrong` | - | "unknown transport ... or byte order (little, big, big-wordswap)", exit 1 | | |
 
-- [ ] `big-wordswap` data test: needs the new PLC simulator (10i)
+- [x] `big-wordswap` data test: done with the new PLC simulator, all three transports (see 10i results)
 - [ ] Registry `modbus\ByteOrder = "xyz"`: event-log warning (needs admin rights to write HKLM: test VM / installer test)
 
 ---
